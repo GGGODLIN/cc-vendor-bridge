@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gggodlin.cc-vendor-bridge-proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/linhancheng/.bun/bin/bun</string>
+        <string>run</string>
+        <string>/Users/linhancheng/Desktop/projects/cc-vendor-bridge/proxy/server.ts</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/linhancheng/Desktop/projects/cc-vendor-bridge/proxy</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/linhancheng/Library/Logs/cc-vendor-bridge-proxy.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/linhancheng/Library/Logs/cc-vendor-bridge-proxy.log</string>
+</dict>
+</plist>

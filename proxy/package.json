@@ -1,0 +1,10 @@
+{
+  "name": "cc-vendor-bridge-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "bun --watch server.ts"
+  }
+}

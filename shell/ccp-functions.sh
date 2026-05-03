@@ -25,8 +25,25 @@ ccp-deepseek() {
     echo "ccp-deepseek: DEEPSEEK_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
+
+  # Health check: ensure proxy daemon is up (rewrites tool_choice for caveat 8 fix).
+  # If not listening, kickstart via launchd and wait up to 5s for ready.
+  if ! /usr/bin/nc -z 127.0.0.1 9091 2>/dev/null; then
+    echo "[ccp-deepseek] proxy not listening, kickstarting launchd service..." >&2
+    launchctl kickstart "gui/$UID/com.gggodlin.cc-vendor-bridge-proxy" 2>/dev/null
+    local i=0
+    while (( i < 50 )); do
+      /usr/bin/nc -z 127.0.0.1 9091 2>/dev/null && break
+      sleep 0.1; ((i++))
+    done
+    if (( i >= 50 )); then
+      print -P "%F{red}[ccp-deepseek] proxy did not become ready in 5s — aborting (check ~/Library/Logs/cc-vendor-bridge-proxy.log)%f" >&2
+      return 1
+    fi
+  fi
+
   (
-    export ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
+    export ANTHROPIC_BASE_URL=http://127.0.0.1:9091
     export ANTHROPIC_AUTH_TOKEN=$DEEPSEEK_API_KEY
     export ANTHROPIC_MODEL=deepseek-v4-pro
     export ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro
