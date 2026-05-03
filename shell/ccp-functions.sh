@@ -34,6 +34,7 @@ ccp-deepseek() {
     export ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
     export CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
     export CLAUDE_CODE_EFFORT_LEVEL=max
+    export ENABLE_TOOL_SEARCH=auto
     claude "$@"
   )
 }
@@ -49,6 +50,7 @@ ccp-kimi() {
     export ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic
     export ANTHROPIC_AUTH_TOKEN=$MOONSHOT_API_KEY
     export ANTHROPIC_MODEL=kimi-k2.5
+    export ENABLE_TOOL_SEARCH=auto
     claude "$@"
   )
 }
@@ -64,6 +66,7 @@ ccp-kimi-cn() {
     export ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic
     export ANTHROPIC_AUTH_TOKEN=$MOONSHOT_CN_API_KEY
     export ANTHROPIC_MODEL=kimi-k2.5
+    export ENABLE_TOOL_SEARCH=auto
     claude "$@"
   )
 }
@@ -82,6 +85,7 @@ ccp-glm() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL=GLM-4.7
     export ANTHROPIC_DEFAULT_HAIKU_MODEL=GLM-4.5-Air
     export API_TIMEOUT_MS=3000000
+    export ENABLE_TOOL_SEARCH=auto
     claude "$@"
   )
 }
@@ -100,6 +104,7 @@ ccp-glm-cn() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL=GLM-4.7
     export ANTHROPIC_DEFAULT_HAIKU_MODEL=GLM-4.5-Air
     export API_TIMEOUT_MS=3000000
+    export ENABLE_TOOL_SEARCH=auto
     claude "$@"
   )
 }
@@ -116,6 +121,7 @@ ccp-qwen() {
     export ANTHROPIC_BASE_URL=https://dashscope-intl.aliyuncs.com/apps/anthropic
     export ANTHROPIC_AUTH_TOKEN=$DASHSCOPE_INTL_API_KEY
     export ANTHROPIC_MODEL=qwen3-max
+    export ENABLE_TOOL_SEARCH=auto
     claude "$@"
   )
 }
@@ -130,6 +136,7 @@ ccp-qwen-coding() {
     export ANTHROPIC_BASE_URL=https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
     export ANTHROPIC_AUTH_TOKEN=$QWEN_CODING_PLAN_KEY
     export ANTHROPIC_MODEL=qwen3-coder-next
+    export ENABLE_TOOL_SEARCH=auto
     claude "$@"
   )
 }
