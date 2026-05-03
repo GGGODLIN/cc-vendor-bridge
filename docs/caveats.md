@@ -80,11 +80,44 @@ For each Path 0 vendor, verify these 5 dimensions. All claims of "✅ verified" 
 ## 實測結果（待填）
 
 ### DeepSeek
-- [ ] 1. Prompt cache:
-- [ ] 2. Extended thinking:
-- [ ] 3. MCP tool schema:
-- [ ] 4. CLAUDE.md adherence:
-- [ ] 5. Subagent dispatch:
+
+**Tested:** 2026-05-03 via direct curl to `https://api.deepseek.com/anthropic/v1/messages` (Bearer auth, anthropic-version: 2023-06-01, model: deepseek-v4-pro)
+
+- [x] **1. Prompt cache** — ✅ **WORKS, auto cache, no write fee**
+  - Round 1 (3413 input tokens, system has `cache_control: ephemeral`): `cache_creation_input_tokens: 0`, `cache_read_input_tokens: 0`
+  - Round 2 (same payload): `input_tokens: 85`, `cache_read_input_tokens: 3328` → **97.5% cache hit**
+  - DeepSeek does NOT charge cache_creation (vs Anthropic 1.25× write fee). Auto cache mechanism, but `cache_control` markers are NOT silently stripped (unlike CCR/LiteLLM #26625).
+  - Cross-request cache leakage observed: subsequent unrelated request hit 128 cache tokens from earlier session — suggests aggressive auto-detect. Privacy implication minimal (per-account cache namespace assumed).
+
+- [x] **2. Extended thinking** — ✅ **WORKS, native `thinking` block schema**
+  - All test responses returned `content[0].type = "thinking"` with full `thinking` text and `signature`
+  - V4-Pro reasoning chain auto-surfaces as Anthropic-format thinking block
+  - No errors, no schema mismatch
+
+- [x] **3. MCP tool schema (64-char name)** — ✅ **WORKS, accepts even 65-char names**
+  - Tested 53-char name `mcp__claude_in_chrome_long_namespace_test__do_a_thing_2` → tool_use emitted with full name preserved
+  - Tested 65-char name (over Anthropic spec limit) `mcp__claude_in_chrome_devtools_long_namespace_test__do_a_thing_xx` → also accepted, full round-trip works, input correctly populated
+  - More permissive than CCR (#1348 rejects 64-char)
+  - **CC client-side validation may still reject >64 chars** — needs CC-level confirmation
+
+- [x] **4. CLAUDE.md adherence** — ✅ **WORKS, actively applies rules**
+  - System prompt with 反晶晶體 + 繁中 + 程式碼風格規則
+  - Final text fully traditional Chinese: 「useState 是 React Hook，賦予函數組件內部狀態，回傳當前值與更新函式」
+  - Thinking block shows model **actively reasoning about rule application**: 「不要晶晶體。所以不用『useState 是一個 hook，可以讓 functional component 有 state』之類的，要用『useState 是 React Hook，賦予函數組件狀態』」
+  - Technical term decision correct (useState/Hook stay English; functional component → 函數組件)
+  - Code sample: no comments (符合「生成程式碼時不要有註解」)
+  - `??` vs `||` rule not exercised in this test (sample didn't need fallback operator)
+
+- [x] **5. Subagent dispatch (Task tool emit)** — ✅ **WORKS at schema level**
+  - With Task tool schema in `tools[]`, prompt asking for parallel dispatch
+  - Result: `stop_reason: "tool_use"`, `content_types: [thinking, tool_use, tool_use]` — 2 parallel Task calls emitted
+  - Both calls had complete `description`, `prompt`, `subagent_type` filled correctly
+  - **Pending CC-level**: whether `CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash` env var actually routes subagent context to V4-Flash (CC client-side behavior, not vendor)
+
+**Pending CC-level confirmation** (run via `ccp-deepseek` after exit current session):
+- Real MCP server mount → tool round-trip
+- Subagent execution actually uses V4-Flash (check via `/model` or token usage delta)
+- Plan mode UX behavior (does CC see thinking block correctly)
 
 ### Kimi
 - [ ] 1. Prompt cache:
