@@ -313,6 +313,7 @@ curl -X POST https://api.deepseek.com/anthropic/v1/messages \
 - [ ] 5. Subagent dispatch:
 
 ### GLM
+**Connected:** 2026-05-03, `ccp-glm` via `api.z.ai/api/anthropic`
 - [ ] 1. Prompt cache:
 - [ ] 2. Extended thinking:
 - [ ] 3. MCP tool schema:
