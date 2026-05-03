@@ -2,7 +2,9 @@
 
 Personal toolkit for plugging non-Anthropic LLM vendors into Claude Code CLI without giving up the CC ecosystem (skills, MCP, hooks, CLAUDE.md, subagents).
 
-**Status:** Stage 1 — research + Path 0 zsh functions ready. Path 1 sidecar plugin not yet built.
+**Status:** Stage 2 — DeepSeek verified production-ready (2026-05-03). Kimi / GLM / Qwen pending vendor sign-up. Path 1 sidecar plugin not yet built.
+
+See [`docs/stage-2-playbook.md`](docs/stage-2-playbook.md) for the per-vendor onboarding protocol.
 
 ## Three paths
 
@@ -22,15 +24,22 @@ Personal toolkit for plugging non-Anthropic LLM vendors into Claude Code CLI wit
 ## Layout
 
 ```
-docs/                              # research + design notes (Path 0 + Path 1)
+docs/                              # research + design notes + Stage 2 protocol
 ├── path-0-anthropic-native.md     # 4-vendor endpoint reference
 ├── path-1-sidecar-design.md       # plugin pattern (planned)
-├── caveats.md                     # what each vendor breaks (待實測)
+├── caveats.md                     # 10 caveats catalogued; DeepSeek results
+├── stage-2-playbook.md            # onboarding protocol for new vendors
 └── pricing-snapshot-2026-05.md    # vendor pricing (stale-by 2026-08)
 
 shell/
-├── ccp-functions.sh               # 4 zsh functions: ccp-deepseek / ccp-kimi / ccp-glm / ccp-qwen
+├── ccp-functions.sh               # 7 zsh functions (ccp-deepseek / kimi / glm / qwen variants)
 └── secrets.example                # API key template (DO NOT commit real keys)
+
+proxy/                             # caveat 9 fix — DeepSeek tool_choice rewriter
+├── server.ts                      # Bun proxy on 127.0.0.1:9091
+├── launchd.plist                  # macOS auto-start daemon
+├── package.json                   # bun scripts
+└── README.md                      # install + verify
 
 plugin/                            # Path 1 sidecar (Stage 3, not started)
 tests/                             # smoke tests for cache/thinking/subagent verification
@@ -60,15 +69,25 @@ Each function uses a subshell so env vars don't leak into your main shell. Your 
 
 ## Caveats — verify before relying on these
 
-The vendor docs don't list these failure modes. Real verification needed before treating any path as "done":
+The vendor docs don't list these failure modes. 10 caveats catalogued so far:
 
-1. **Prompt cache** — does `cache_control` actually work, or get silently stripped?
-2. **Extended thinking** — only Qwen Max series confirmed; others unknown
-3. **MCP tool schema** — 64-char name limits, nested schemas
-4. **Subagent dispatch** — only DeepSeek explicitly documents `CLAUDE_CODE_SUBAGENT_MODEL`
-5. **CLAUDE.md adherence** — vs Claude on language constraints, hook responses
+**Vendor-side test dimensions (5 — verify per vendor):**
+1. Prompt cache — `cache_control` honored or silently stripped?
+2. Extended thinking — `thinking` block schema
+3. MCP tool schema — 64-char name + nested schema
+4. CLAUDE.md adherence — language + style rule following
+5. Subagent dispatch — Task tool emit + per-vendor `*_SUBAGENT_MODEL` env var
 
-See `docs/caveats.md` for the test plan.
+**CC client-side limits (3 — affect all third-party vendors):**
+6. Context window 200K fallback — fix via `DISABLE_COMPACT=1` + `CLAUDE_CODE_MAX_CONTEXT_TOKENS=<size>`
+7. ToolSearch defer disabled — fix via `ENABLE_TOOL_SEARCH=auto`
+8. Stop hook nudges vendor model → unwanted memory writes — fix via `CC_VENDOR` marker + hook Defense 0
+
+**Vendor-side bugs found during Stage 2 (2 — vendor-specific):**
+9. DeepSeek `tool_choice: {type:tool, name:X}` rejected — fix via `proxy/server.ts` rewrite to `{type:any}`
+10. Vendor self-describe hallucinates about CC internal config — no fix, document only
+
+See [`docs/caveats.md`](docs/caveats.md) for full test plan + DeepSeek verification results.
 
 ## Stale-by
 

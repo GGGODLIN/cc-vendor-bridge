@@ -159,6 +159,97 @@ ccp-deepseek
 - [ ] DeepSeek statusline 顯示 1000k（待 user 開新 session 確認）
 - [ ] AutoCompact 確實不觸發（需長 session 才能驗）
 
+### 7. ToolSearch defer loading disabled for non-Anthropic backends
+
+**症狀：** CC 對 `ANTHROPIC_BASE_URL != api.anthropic.com` 預設 disable ToolSearch deferred loading，所有 MCP tool schemas 一次塞進 context、吃 tokens。
+
+**對 ccp-* 的影響：** mount 大量 MCP server（user 環境有 ~250 deferred tools）時 context overflow 早觸發。Subagent 也受影響——V4-Flash subagent 在 c7b3f805 session 觀察到 non-deterministic 行為：A 沒先 ToolSearch 直接 emit deferred tool → `InputValidationError` → self-correct → 加 turns；B 一開始就 ToolSearch first → 一次到位。
+
+**Root cause：** CC client 對 non-firstParty BASE_URL 預設 conservative — 假設第三方 backend 不一定支援 ToolSearch protocol。
+
+**Workaround：** `export ENABLE_TOOL_SEARCH=auto` 強制 enable defer loading 即使 BASE_URL 非 Anthropic。
+
+**ccp-functions.sh 已套用（2026-05-03）：** 7 個 ccp-* function 全部加。
+
+**驗證方式：**
+
+```bash
+# 對 jsonl grep ToolSearch tool_use with select: query
+jq -rc 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use" and .name=="ToolSearch") | .input.query' <session.jsonl>
+# 應看到 'select:mcp__filesystem__list_directory,...' 之類，代表 model 主動 emit ToolSearch
+```
+
+### 8. Stop hook nudges vendor model → unwanted memory writes
+
+**症狀：** CC stop hook (`~/.claude/hooks/checkpoint-judge.sh`) 觸發 checkpoint prompt 「告一段落？是 → 寫 memory；否 → 回 skip」。Anthropic Claude 被 trained 認得這個 protocol 正確 reply skip 或寫 essential memory；**第三方 vendor model 沒被 trained，行為 non-deterministic**——有時候誤把 hook 訊息當 user 指令而 emit Write tool 寫 ephemeral state 進 memory file。
+
+**對 ccp-* 的影響：** 4ca5a3b3 session DS 把當下 task spec 寫進 `~/.claude/projects/.../memory/proxy-tool-choice.md`（屬 ephemeral，按 CLAUDE.md 規則不該寫 memory）。長期累積會污染 user 的 memory directory。
+
+**Root cause：** Hook 不知道當前 session 是 vendor-backed。原本基於 `ANTHROPIC_BASE_URL` pattern 的判斷 leak: cc-vendor-bridge proxy URL 是 `http://127.0.0.1:9091` (localhost) → 看起來像 cc-i18n-proxy 那種轉到 Anthropic 上游的 proxy → hook allow checkpoint。
+
+**Workaround：** `export CC_VENDOR=<name>` 在 ccp-* subshell 內當 explicit marker，hook 加 Defense 0：
+
+```bash
+# In ~/.claude/hooks/checkpoint-judge.sh
+[[ -n "$CC_VENDOR" ]] && exit 0
+```
+
+**ccp-functions.sh 已套用（2026-05-03）：** 7 個 function 全部 `export CC_VENDOR=<vendor>`（deepseek/kimi/kimi-cn/glm/glm-cn/qwen/qwen-coding）。
+
+**Trade-off：** vendor session 完全不被 stop hook nudge 寫 memory。但 user 主動 prompt「請寫 memory: X」時，vendor model 還是可以 emit Write tool 寫 memory file（hook 跟 Write tool 是獨立路徑）。**實質：「不被 passive nudge」vs「可主動 trigger」的取捨**，net positive 避免 ephemeral state 被誤寫。
+
+**驗證方式：**
+
+```bash
+jq -c 'select(.type=="attachment" and .attachment.type=="hook_blocking_error") | .attachment.hookEvent' <session.jsonl>
+# 對 ccp-* session 應該 0 行（Stop hook 完全沒 fire）
+```
+
+## Vendor-side discovered issues (during Stage 2)
+
+These are vendor backend bugs found during real testing, not test dimensions to verify. Likely vendor-specific — re-test for each new vendor.
+
+### 9. DeepSeek: `tool_choice: {type:"tool", name:X}` rejected
+
+**症狀：** DeepSeek anthropic endpoint 收到 `tool_choice: {type:"tool", name:X}` 時回 HTTP 400 `"deepseek-reasoner does not support this tool_choice"`。`auto` / `any` 都 OK，只有 specific tool 強制中。
+
+**對 ccp-deepseek 的影響：** CC 內 server-side WebSearch / WebFetch / 某些 force-emit pattern 會送 specific tool_choice → 全失敗。c7b3f805 session subagent A 跑 web research 時 trial-and-error 45 turns 才 fall back curl Bash 拿到答案（vs subagent B 12 turns 因為剛好沒 trigger 此 path）。
+
+**Reproducer (curl)：**
+
+```bash
+curl -X POST https://api.deepseek.com/anthropic/v1/messages \
+  -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+  -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-v4-pro","max_tokens":30,"tools":[{"name":"ping","description":"x","input_schema":{"type":"object","properties":{}}}],"tool_choice":{"type":"tool","name":"ping"},"messages":[{"role":"user","content":"hi"}]}'
+# → HTTP 400
+```
+
+**Workaround：** Thin Bun proxy `proxy/server.ts` rewrite `tool_choice: {type:tool, name:X}` → `{type:any}` 再 forward。launchd auto-start daemon。
+
+**ccp-functions.sh `ccp-deepseek` 已 wired：** `ANTHROPIC_BASE_URL=http://127.0.0.1:9091` (proxy)，預啟動 health check via `nc -z 127.0.0.1 9091` + `launchctl kickstart` fallback。
+
+**是否影響其他 vendor：** 未驗。每家 vendor 自己寫 anthropic translation layer，DS 中槍是因為他們 wire 到 deepseek-reasoner 模型而 reasoning 模型不接受 specific tool 強制（OpenAI-compat 的 reasoner 也常這樣）。其他 vendor 可能不中——加新 vendor 時用 [stage-2-playbook.md](./stage-2-playbook.md) Test 6 驗一次。
+
+### 10. Vendor self-describe hallucinates about CC internal config
+
+**症狀：** Vendor model 對 CC 自身配置（subagent routing / model used / env var effect / hook protocol）reasoning 出**邏輯合理但事實錯誤**的描述。
+
+**Example (DeepSeek 在 c7b3f805 session)：**
+- DS V4-Pro final answer claims：「subagent 使用 DeepSeek v4 Pro，因為 general-purpose agent 沒指定 model 所以繼承父層模型」
+- Ground truth (subagent jsonl `agent-afc721d99946fd916.jsonl`)：`{"type":"assistant","message":{"model":"deepseek-v4-flash",...}}` — 實際走 V4-Flash，via `CLAUDE_CODE_SUBAGENT_MODEL` env var routing
+
+**Root cause：** Vendor model 沒被 trained 在 CC internals（env var contract / hook protocol / subagent dispatch routing）。它從可見的 source code clue + Anthropic doc 自行 reasoning，但缺少 runtime context，結論可能跟 ground truth 違背。
+
+**No fix — document only.**
+
+**對 user 的指引：**
+- Vendor model 對 CC config 的 self-describe **不可信**
+- Ground truth 永遠從 jsonl log (`~/.claude/projects/.../<session>.jsonl` + `subagents/agent-*.jsonl`) 或 CC binary 反組譯拿
+- 跟 vendor model 討論 CC behavior 時，verify with raw log evidence
+
+**是否影響其他 vendor：** Likely all vendors 同 pattern（沒 train 在 CC 內部），just severity 跟 confidence 程度不同。Stage 2 onboard 時觀察各家 self-describe 質量。
+
 ## 推薦實測順序
 
 1. **DeepSeek 先**（user 有 $1.85 餘額 + 5/31 前 75% off + 唯一給 SUBAGENT_MODEL 環境變數 = 最低風險）
@@ -203,10 +294,16 @@ ccp-deepseek
   - Both calls had complete `description`, `prompt`, `subagent_type` filled correctly
   - **Pending CC-level**: whether `CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash` env var actually routes subagent context to V4-Flash (CC client-side behavior, not vendor)
 
-**Pending CC-level confirmation** (run via `ccp-deepseek` after exit current session):
-- Real MCP server mount → tool round-trip
-- Subagent execution actually uses V4-Flash (check via `/model` or token usage delta)
-- Plan mode UX behavior (does CC see thinking block correctly)
+**CC-level verified (2026-05-03 via ccp-deepseek sessions c7b3f805, f88c2681, 92a223af):**
+- ✅ Real MCP round-trip: filesystem (c7b3f805) + context7 resolve-library-id / query-docs (92a223af)
+- ✅ Subagent execution actually V4-Flash: `subagents/agent-*.jsonl` shows `"model":"deepseek-v4-flash"` (caveat 5b confirmed via `CLAUDE_CODE_SUBAGENT_MODEL` env routing)
+- ✅ ToolSearch defer triggered: main V4-Pro emits `select:` queries before deferred tool calls (after `ENABLE_TOOL_SEARCH=auto` patch)
+- ✅ Caveat 8 (tool_choice incompat) fix verified: f88c2681 ran web research subagents without 45-turn hell after proxy deployed
+- ✅ Caveat 9 (vendor self-describe hallucinate): DS claimed "subagent uses V4-Pro" while ground truth was V4-Flash — confirmed limitation
+- ✅ Hook errors zero in 92a223af: `CC_VENDOR=deepseek` triggers Defense 0 (no Stop hook fire); node 24 (nvm-managed, self-contained ICU) eliminates dyld errors
+
+**Pending observation (long session):**
+- AutoCompact 確實不觸發 (caveat 6 — 需 long-context session 跑到 187K+ 才能 confirm `DISABLE_COMPACT=1` 真的 disable)
 
 ### Kimi
 - [ ] 1. Prompt cache:
