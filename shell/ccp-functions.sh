@@ -16,7 +16,16 @@
 #   ccp-deepseek                # default DeepSeek session
 #   ccp-deepseek -c             # continue last DeepSeek session
 #   ccp-kimi /path/to/proj      # open in specific dir
-#   etc.
+#
+# Per-call override (env vars use ${VAR:-default} so caller can pre-set):
+#   ANTHROPIC_MODEL=deepseek-v4-flash ccp-deepseek -p "task"  # main = flash
+#   CLAUDE_CODE_EFFORT_LEVEL=low ccp-deepseek                  # less thinking
+#   CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-pro ccp-deepseek    # subagent = pro
+#
+# Hardcoded (NOT overridable, since they bind the function to a specific vendor):
+#   - ANTHROPIC_BASE_URL  (vendor endpoint)
+#   - ANTHROPIC_AUTH_TOKEN (sourced from secrets)
+#   - CC_VENDOR            (vendor marker for hook Defense 0)
 
 # ===== DeepSeek V4-Pro =====
 # Source: https://api-docs.deepseek.com/zh-cn/quick_start/agent_integrations/claude_code
@@ -26,7 +35,7 @@ ccp-deepseek() {
     return 1
   fi
 
-  # Health check: ensure proxy daemon is up (rewrites tool_choice for caveat 8 fix).
+  # Health check: ensure proxy daemon is up (rewrites tool_choice for caveat 9 fix).
   # If not listening, kickstart via launchd and wait up to 5s for ready.
   if ! /usr/bin/nc -z 127.0.0.1 9091 2>/dev/null; then
     echo "[ccp-deepseek] proxy not listening, kickstarting launchd service..." >&2
@@ -46,15 +55,15 @@ ccp-deepseek() {
     export CC_VENDOR=deepseek
     export ANTHROPIC_BASE_URL=http://127.0.0.1:9091
     export ANTHROPIC_AUTH_TOKEN=$DEEPSEEK_API_KEY
-    export ANTHROPIC_MODEL=deepseek-v4-pro
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
-    export CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
-    export CLAUDE_CODE_EFFORT_LEVEL=max
-    export ENABLE_TOOL_SEARCH=auto
-    export DISABLE_COMPACT=1
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-deepseek-v4-pro}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-deepseek-v4-pro}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-deepseek-v4-pro}
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-deepseek-v4-flash}
+    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-deepseek-v4-flash}
+    export CLAUDE_CODE_EFFORT_LEVEL=${CLAUDE_CODE_EFFORT_LEVEL:-max}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1000000}
     claude "$@"
   )
 }
@@ -70,8 +79,8 @@ ccp-kimi() {
     export CC_VENDOR=kimi
     export ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic
     export ANTHROPIC_AUTH_TOKEN=$MOONSHOT_API_KEY
-    export ANTHROPIC_MODEL=kimi-k2.5
-    export ENABLE_TOOL_SEARCH=auto
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-kimi-k2.5}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     claude "$@"
   )
 }
@@ -87,8 +96,8 @@ ccp-kimi-cn() {
     export CC_VENDOR=kimi-cn
     export ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic
     export ANTHROPIC_AUTH_TOKEN=$MOONSHOT_CN_API_KEY
-    export ANTHROPIC_MODEL=kimi-k2.5
-    export ENABLE_TOOL_SEARCH=auto
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-kimi-k2.5}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     claude "$@"
   )
 }
@@ -104,11 +113,11 @@ ccp-glm() {
     export CC_VENDOR=glm
     export ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
     export ANTHROPIC_AUTH_TOKEN=$ZAI_API_KEY
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=GLM-4.7
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=GLM-4.7
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=GLM-4.5-Air
-    export API_TIMEOUT_MS=3000000
-    export ENABLE_TOOL_SEARCH=auto
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-GLM-4.7}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-GLM-4.7}
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-GLM-4.5-Air}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     claude "$@"
   )
 }
@@ -124,11 +133,11 @@ ccp-glm-cn() {
     export CC_VENDOR=glm-cn
     export ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic
     export ANTHROPIC_AUTH_TOKEN=$BIGMODEL_API_KEY
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=GLM-4.7
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=GLM-4.7
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=GLM-4.5-Air
-    export API_TIMEOUT_MS=3000000
-    export ENABLE_TOOL_SEARCH=auto
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-GLM-4.7}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-GLM-4.7}
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-GLM-4.5-Air}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     claude "$@"
   )
 }
@@ -145,8 +154,8 @@ ccp-qwen() {
     export CC_VENDOR=qwen
     export ANTHROPIC_BASE_URL=https://dashscope-intl.aliyuncs.com/apps/anthropic
     export ANTHROPIC_AUTH_TOKEN=$DASHSCOPE_INTL_API_KEY
-    export ANTHROPIC_MODEL=qwen3-max
-    export ENABLE_TOOL_SEARCH=auto
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-qwen3-max}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     claude "$@"
   )
 }
@@ -161,8 +170,8 @@ ccp-qwen-coding() {
     export CC_VENDOR=qwen-coding
     export ANTHROPIC_BASE_URL=https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
     export ANTHROPIC_AUTH_TOKEN=$QWEN_CODING_PLAN_KEY
-    export ANTHROPIC_MODEL=qwen3-coder-next
-    export ENABLE_TOOL_SEARCH=auto
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-qwen3-coder-next}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     claude "$@"
   )
 }
@@ -182,6 +191,11 @@ Available cc-vendor-bridge functions:
 
 Each opens a Claude Code session backed by that vendor.
 Pass any args you'd pass to 'claude' (e.g. '-c', '/path/to/proj').
+
+Per-call env override (use \${VAR:-default} pattern):
+  ANTHROPIC_MODEL=deepseek-v4-flash ccp-deepseek -p "task"
+  CLAUDE_CODE_EFFORT_LEVEL=low ccp-deepseek
+  CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-pro ccp-deepseek
 
 To switch mid-conversation: Ctrl-D to exit, then run a different ccp-* function.
 EOF
