@@ -1,100 +1,155 @@
-# Path 1 — Sidecar Pattern (Planned)
+# Path 1 — `claude -p` Headless Reuse
 
-CC stays on Claude as orchestrator. Specific sub-tasks are offloaded to other vendor CLIs/APIs via Bash wrapper or MCP. Like [`codex:codex-rescue`](https://github.com/anthropics/codex-rescue) does for OpenAI Codex.
+CC stays on Claude as orchestrator; specific sub-tasks are offloaded to other vendor sessions running in `claude -p` (headless mode), reusing the same Path 0 env-var setup.
 
-**Status: not started.** This doc captures the design ahead of implementation so we know what we're building when we get to Stage 3.
+**Status: 2026-05-03 — design simplified after Stage 2 insight**
 
-## When you'd want this vs Path 0
+## TL;DR
 
-- **Path 0** — 整段 session 用其他 vendor model（throwaway exploration、跑 cheap test、用 1M context model 處理長檔）
-- **Path 1** — 主 session 仍用 Claude，但**特定 task** 想找 second opinion / 特殊能力（例如 Qwen 的 1M context 摘要、Kimi K2.6 的 SWE-Pro 強項、DeepSeek V4-Pro 75% off cheap fallback）
+Once a vendor is wired through Path 0 (`ccp-<vendor>` zsh function with all caveat fixes), Path 1 sidecar capability is essentially **free**:
 
-Path 1 keeps Claude orchestrating + ecosystem intact; Path 0 swaps the orchestrator entirely.
+```bash
+ccp-<vendor>-rescue() { ccp-<vendor> -p --dangerously-skip-permissions "$@"; }
+```
 
-## Reference: how `codex-rescue` does it
+5-line wrapper per vendor. CC's built-in `-p` flag runs the full agent loop (Read / Write / Edit / Bash / MCP / subagent dispatch) non-interactively and prints the final assistant message to stdout. The vendor's anthropic-format endpoint, ToolSearch defer, subagent routing, hook bypass, proxy fix — all inherited.
 
-`codex` CLI has `codex exec --json` mode → one-shot run, structured event JSON to stdout, exit code signals success/failure. The `codex-rescue` plugin wraps this so CC can call `codex exec --json "..."` from a Bash subagent.
+## When you'd want Path 1 vs Path 0
 
-Pattern: `parent agent (Claude) → subagent dispatch → Bash → external CLI --json → parse stdout → return to parent`.
+| Scenario | Path 0 | Path 1 |
+|---|---|---|
+| Whole exploration session in vendor | ✅ | — |
+| Long doc summarization (1M context) | ✅ | — |
+| Throwaway cheap test | ✅ | — |
+| Main Claude session needs a vendor for ONE task | — | ✅ |
+| Second opinion / cross-check | — | ✅ |
+| Implementation-heavy sub-task while Claude orchestrates | — | ✅ |
 
-## Per-vendor delegation tier
+Path 0 swaps the orchestrator entirely; Path 1 keeps Claude orchestrating + ecosystem intact.
 
-Verified 2026-05-03:
+## How the architecture clicks
 
-| Vendor | Tier | Mechanism | Verified |
-|---|---|---|---|
-| **Qwen-Code** | 1 (drop-in) | `qwen -p "..." -o json --auth-type openai --openai-api-key $KEY` | ✅ v0.15.6 (2026-04-30 push); `--bare` flag like codex skip-auto-discovery; `--json-fd` / `--json-file` 雙輸出 |
-| **Kimi-CLI** | 2 (一次性 setup) | `kimi --print -p "..." --output-format=stream-json` | ✅ v1.41.0 (2026-04-30); JSONL 輸出 + exit code 0/1/75; 但要先 `/login` 互動式設 API key |
-| **DeepSeek** | 3 (curl + jq) | `curl /v1/chat/completions` + `jq` | OpenAI-compat endpoint，無官方 CLI，5 行 bash wrapper 即可 |
-| **GLM (z.ai)** | 3 | `curl https://api.z.ai/api/paas/v4/chat/completions` + `jq` | OpenAI-compat |
-| **DashScope** | 3 | `curl` 或借 qwen-code 當 wrapper | 無獨立 dashscope CLI |
-| **MiniMax MMX-CLI** | 1.5 | `mmx text chat --message "..."` | 官方 MIT；agent-first 設計；JSON 輸出 flag 不在 public docs sample，需安裝後驗證 |
-| **TRAE Agent** | — | — | ❌ Skip — 2026-02-05 last commit (3 個月停滯) + 不是 ByteDance 模型專屬 CLI（generic agent runner 吃 OpenAI/Anthropic key） |
+`claude` CLI's `-p` (or `--print`) mode = headless: take prompt as arg/stdin → run full agent loop internally → print final assistant message to stdout → exit. Same model / tools / MCP / CLAUDE.md as interactive mode.
 
-⚠️ **MiniMax-MCP 官方 server 不能用作 text delegation**——只暴露 multimodal tools (TTS / image / video / music / voice / vision)，沒 chat tool。
+Combined with subshell `ccp-<vendor>` env setup:
 
-## 設計：CC plugin scaffold
+```
+Main Claude (Opus, interactive)
+  └─ Bash tool: ccp-deepseek-rescue "<task>"
+       └─ subshell with vendor env vars
+            └─ claude -p "<task>"
+                 └─ DS V4-Pro agent loop (Read / Write / Edit / Bash / Task / MCP)
+                 └─ exit, prints final message
+       ← Main Claude reads the printed message and decides next step
+```
+
+This is the structural equivalent of `codex-rescue`:
+
+| Pattern | Outer | Inner |
+|---|---|---|
+| codex-rescue | main Claude → Bash | `codex exec "task"` (OpenAI agent) |
+| ccp-deepseek-rescue | main Claude → Bash | `claude -p` with DS env (DS agent) |
+
+## File layout
 
 ```
 plugin/
-├── plugin.json                # CC plugin manifest
-├── agents/
-│   ├── deepseek-rescue.md     # subagent (description + tool restrictions)
-│   ├── kimi-rescue.md
-│   ├── glm-rescue.md
-│   └── qwen-rescue.md
-├── commands/
-│   ├── deepseek.md            # /deepseek slash command
-│   ├── kimi.md
-│   ├── glm.md
-│   └── qwen.md
-└── lib/
-    ├── deepseek-call.sh       # bash wrapper：curl + jq parse
-    ├── kimi-call.sh           # 包 kimi-cli `--print --output-format=stream-json`
-    ├── glm-call.sh            # 同 deepseek，不同 endpoint
-    └── qwen-call.sh           # 包 qwen-code `-p ... -o json`
+└── sidecar.sh    # all wrapper functions (one per Path 0 vendor)
 ```
 
-每支 wrapper 50–150 行 bash。整包預估 300–600 行 code。
+That's it. No plugin manifest, no agents/, no commands/, no lib/. The full work is the 5-line wrapper times N vendors.
 
-## Agent definition 模板
+## Per-vendor: what carries over from Path 0
 
-```markdown
----
-name: deepseek-rescue
-description: Offload a specific coding task to DeepSeek V4-Pro. Use when (a) need 1M context, (b) need cheap throwaway analysis, (c) Claude is stuck and want a second opinion. NOT for tasks requiring CLAUDE.md adherence — DeepSeek may not honor user constraints as faithfully as Claude.
-tools: Bash, Read
----
+Once Path 0 is verified for a vendor, Path 1 inherits:
 
-You are a thin wrapper around DeepSeek V4-Pro. Your job is to:
+| From Path 0 | Inherited by Path 1? |
+|---|---|
+| `ANTHROPIC_BASE_URL` env | ✅ |
+| `ANTHROPIC_AUTH_TOKEN` | ✅ |
+| `*_SUBAGENT_MODEL` (subagent routing) | ✅ verified for DS |
+| `ENABLE_TOOL_SEARCH=auto` (caveat 7 fix) | ✅ |
+| `CC_VENDOR=<name>` marker (caveat 8 fix — hook bypass) | ✅ |
+| Proxy daemon (caveat 9 fix for DS) | ✅ |
+| `DISABLE_COMPACT=1` + `MAX_CONTEXT_TOKENS` (caveat 6 fix) | ✅ |
+| Vendor caveats 1-5 schema-level pass | ✅ |
 
-1. Take the task description from the parent agent
-2. Call `lib/deepseek-call.sh "<task>"`
-3. Parse JSON response
-4. Return findings to parent
+Pre-launch health check (proxy daemon kickstart for DS) also runs identically, since `-p` mode is just a flag on the same `claude` invocation.
 
-Do NOT do the task yourself. You are a relay.
+## Per-vendor: what needs new Path 1 verification
+
+| Check | Done for DS? | Notes |
+|---|---|---|
+| `claude -p` runs to completion in vendor session | 待 first dispatch test | Should work — same agent loop |
+| Subagent dispatch in headless mode | 待測 | Theoretical: same env, should route via SUBAGENT_MODEL |
+| Tool permission handling (skip-permissions vs allowedTools) | 設計選 skip-permissions for vibe coding | See safety section |
+| Stdout buffering / streaming | 待測 | `-p` defaults to non-streaming text output |
+
+## Safety: `--dangerously-skip-permissions`
+
+Headless mode can't show permission prompts. Two options:
+
+1. **`--dangerously-skip-permissions`** (vibe coding default) — All tool calls run without confirmation. Acceptable when:
+   - You wrote the wrapper invocation
+   - The task description is your own (not from external prompt injection)
+   - You're in your own repos, not production systems
+   - The wrapper is called from your own main Claude session, not exposed to untrusted callers
+
+2. **`--allowedTools <list>`** (stricter) — Whitelist specific tools (e.g. `Read,Write,Edit,Bash` but not `WebFetch`). More secure but requires per-task configuration.
+
+`plugin/sidecar.sh` defaults to skip-permissions. Override per-call by passing different flags through `"$@"` (the wrapper passes args verbatim after the prompt, so `ccp-deepseek-rescue "task" --allowedTools Read,Bash` works).
+
+## Usage from main Claude session
+
+Main Claude's Bash tool runs the wrapper:
+
+```bash
+ccp-deepseek-rescue "讀 src/foo.ts，把所有 Promise.then 重構成 async/await，跑 npm test 確認通過"
 ```
 
-## Slash command 模板
+DS V4-Pro session: opens, reads file, edits, runs test, prints summary, exits. Main Claude receives the summary text via Bash stdout and decides next move.
 
-```markdown
----
-description: Offload current task to DeepSeek V4-Pro for second opinion
----
+For multi-step delegation (Claude plans → DS implements → Claude reviews), main Claude can dispatch multiple sequential or parallel `ccp-*-rescue` calls.
 
-Read the user's most recent message. Dispatch a `deepseek-rescue` subagent with the task and any relevant context. Format the subagent's response as a "Second opinion from DeepSeek" block.
-```
+## Cost framing
 
-## 實作優先順序
+| Cost component | Path 1 sidecar |
+|---|---|
+| Main Claude (Opus) | per-token Pro/Max quota |
+| DS V4-Pro (sub-task) | $0.435/M in, $0.87/M out (75% off until 5/31) — ~10x cheaper than Opus |
+| DS V4-Flash (DS subagent during sub-task) | even cheaper |
+| Cache hit | DS auto-cache up to 99% (no creation fee) |
 
-1. **Qwen-rescue first** — qwen-code CLI 最成熟，--output-format json 直接可用，Tier 1 drop-in 風險最低
-2. **DeepSeek-rescue second** — Tier 3 curl wrapper，5 行 bash，但要驗證 streaming JSON parse 穩定
-3. **Kimi-rescue third** — 要先處理 `/login` 互動 setup，最複雜
-4. **GLM-rescue last** — 跟 DeepSeek 同模式，可參考前者；如果 Coding Plan 訂閱才訂
+Net: implementation-heavy sub-tasks delegated to DS save ~90% on token cost vs main Claude doing it all.
 
-## 開放設計問題
+## What's archived (was over-engineered)
 
-- **要不要每家做完整 plugin，還是先做 1 個共用 scaffold（`vendor-rescue` agent，按參數選 vendor）？** 後者 code 量小但 less specific
-- **Qwen-rescue 要走 qwen-code CLI 還是直接 curl？** CLI 較成熟但需要先 `npm install -g`；curl 無依賴但要自己處理 streaming
-- **Plugin 要走 CC plugin marketplace 標準 (`.claude/plugins/`)，還是輕量手動 install？**
+The original Path 1 design (this doc, pre-2026-05-03) proposed:
+- CC plugin manifest (`plugin.json`, `.claude/plugins/`)
+- Per-vendor `agents/<vendor>-rescue.md` (subagent definitions)
+- Per-vendor `commands/<vendor>.md` (slash commands)
+- Per-vendor `lib/<vendor>-call.sh` wrappers (50-150 lines each, with curl + jq parsing for non-CLI vendors)
+
+Total estimated: 300–600 lines of code across 4-5 vendors.
+
+**Why archived**: All of the above complexity assumed each vendor needs a custom subprocess pattern (CLI wrapper for Qwen-Code / Kimi-CLI / curl for others). Stage 2 verification revealed that Path 0's `ANTHROPIC_BASE_URL` swap pattern + `claude -p` headless reuse covers 100% of the use cases. The vendor-specific subprocess patterns become unnecessary.
+
+The archived approach would still be needed if:
+- A vendor doesn't have an Anthropic-native endpoint (forcing custom CLI)
+- A specific vendor CLI has features beyond what `claude -p` exposes (e.g. Qwen-Code's planning mode that's not in CC)
+- Headless mode breaks for some vendor in unforeseen way
+
+If those cases arise, fall back to per-vendor `lib/*-call.sh` wrapper for that specific vendor only, not as the default architecture.
+
+## Implementation order
+
+1. **Write `plugin/sidecar.sh`** — 7 wrapper functions for Path 0 vendors
+2. **Test with DeepSeek** — main Claude session dispatches via Bash → `ccp-deepseek-rescue "<small task>"` → verify agent loop + final message printout
+3. **Document in plugin/README.md** — usage, safety note, cost framing
+4. **Per-vendor onboarding (Kimi/GLM/Qwen)** — when added, sidecar function added simultaneously since Path 0 + Path 1 are unified
+
+## Open questions
+
+- **Headless subagent dispatch behavior**: in `claude -p`, when the model emits a `Task` tool_use, does the subagent run inline (V4-Flash spawned in same process) or fail because no interactive UI? Needs first-dispatch test.
+- **Stdout structuring**: `claude -p` defaults to plain text. For programmatic parsing from main Claude, may want `--output-format=json` or `--output-format=stream-json` (verify available + schema).
+- **Long-running task timeout**: main Claude's Bash tool has default timeout. For sub-tasks expected to take 5+ minutes, may need `timeout` flag adjustment or background `&` + status polling.
