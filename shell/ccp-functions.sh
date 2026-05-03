@@ -35,6 +35,8 @@ ccp-deepseek() {
     export CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
     export CLAUDE_CODE_EFFORT_LEVEL=max
     export ENABLE_TOOL_SEARCH=auto
+    export DISABLE_COMPACT=1
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000
     claude "$@"
   )
 }

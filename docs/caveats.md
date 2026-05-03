@@ -70,6 +70,95 @@ For each Path 0 vendor, verify these 5 dimensions. All claims of "✅ verified" 
 - GLM: 未明
 - Qwen: 未明
 
+## CC client-side limitations（影響所有 non-first-party vendor）
+
+這些不是 vendor 問題，是 CC binary 自己對 `ANTHROPIC_BASE_URL != api.anthropic.com` 的 fallback 行為。每個 ccp-* 都中槍。
+
+### 6. Context window detection fallback (200K) → premature AutoCompact
+
+**症狀：** 不論 vendor model 真實 context 多大，CC statusline 跟 `/context` 都顯示 200K，AutoCompact 在 ~187K（200K − 13K buffer）觸發。
+
+**對 ccp-deepseek 的影響：** DeepSeek V4-Pro 真實 1M context，但 CC 認 200K → AutoCompact 在真實 context 的 ~18.7% 就觸發，浪費 81% headroom。
+
+**Root cause：** CC `src/utils/model/modelCapabilities.ts:46-51` 的 `isModelCapabilitiesEligible()` gate：
+
+```typescript
+function isModelCapabilitiesEligible(): boolean {
+  if (process.env.USER_TYPE !== 'ant') return false
+  if (getAPIProvider() !== 'firstParty') return false
+  if (!isFirstPartyAnthropicBaseUrl()) return false  // ← 所有 ccp-* fail here
+  return true
+}
+```
+
+base URL 不是 `api.anthropic.com` → `getModelCapability()` 回 `undefined` → `getContextWindowForModel()` fallback 到 `MODEL_CONTEXT_WINDOW_DEFAULT = 200_000`。
+
+DeepSeek 文件的 `[1m]` suffix（`ANTHROPIC_MODEL=deepseek-v4-pro[1m]`）對 CC client 端**無效**，因為 first-party gate 在 model name parsing 之前就 short-circuit 了。`[1m]` 只是 DeepSeek server 端的 routing hint。
+
+**各 vendor 真實 context vs CC 認知（fallback 都是 200K）：**
+
+| Vendor model | 真實 context | CC 認知 | 實際可用比例 |
+|---|---|---|---|
+| DeepSeek V4-Pro | 1M | 200K | 18.7% |
+| DeepSeek V4-Flash | 1M | 200K | 18.7% |
+| Kimi K2.5 / K2.6 | 256K | 200K | 73% |
+| GLM-4.7 / 5.1 | 200K | 200K | 100%（剛好對齊） |
+| Qwen3-Max | 262K | 200K | 71% |
+| Qwen3-Coder-Plus | 1M | 200K | 18.7% |
+| Qwen3.5-Plus / Flash | 1M | 200K | 18.7% |
+
+GLM 系列剛好對齊 200K 所以無感，其他全部受影響。
+
+**反方向風險（vLLM / 自架）：** 同個 root cause 的反向案例——如果你的 vendor 實際是 256K 但 CC fallback 顯示 1M，AutoCompact 永遠不觸發，直接撞 vendor 端的 `context_length_exceeded` hard error。本 repo 列的 vendor 都不會踩這個。
+
+**Workaround（已驗，2026-05-03 from CC v2.1.126 binary disasm）：**
+
+CC 有 env var override，但**有 paired condition**：必須**同時**設 `DISABLE_COMPACT=1` 跟 `CLAUDE_CODE_MAX_CONTEXT_TOKENS=<size>`。
+
+從 binary 反組譯到的判斷邏輯（function `B2`）：
+
+```javascript
+function B2(H, _) {
+  if (yH(process.env.DISABLE_COMPACT) && process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS) {
+    let K = parseInt(process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, 10);
+    if (!isNaN(K) && K > 0) return K;   // ← 唯一 third-party override 路徑
+  }
+  if ($0(H)) return 1e6;                 // first-party model 1M check
+  if (_?.includes(Vi) && Kd(H)) return 1e6;
+  if ($EH(H)) return 1e6;
+  let q = eB_(H);
+  if (q !== null) return q;              // first-party capability lookup
+  return pi6;                            // 200K fallback (MODEL_CONTEXT_WINDOW_DEFAULT)
+}
+```
+
+**設計動機（推測）：** CC 的 contract 是「使用者宣告自己 context size + 自己負責 compact 時機」，避免單設 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 但 AutoCompact 還在用舊算法跑導致 unexpected 行為。
+
+**對 ccp-deepseek 的影響：** 關掉 AutoCompact 反而正中下懷——deepseek 1M headroom 本來就不該過早 compact。需要時手動 `/compact` 即可。
+
+**ccp-functions.sh 已套用（2026-05-03）：**
+- `ccp-deepseek` → 已加 `DISABLE_COMPACT=1` + `CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000`，statusline 待驗顯示 `0k/1000k`
+
+**其他 workaround 候選（無效或不需要）：**
+
+- **`CLAUDE_CODE_AUTO_COMPACT_WINDOW`** — binary 有此 symbol，未測語意，但既然 paired contract 已成立就不需要再追
+- **`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`** — 已知被 `Math.min(0.835, X)` clamp，**只能往下不能往上**，無法解決過早觸發
+
+**Tracking：** [anthropics/claude-code#46416](https://github.com/anthropics/claude-code/issues/46416) — OPEN。Issue OP 提的 workaround 是 `CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000` 單設，但 OP 沒驗證；本 repo 從 binary disasm 補足真實條件（需 paired `DISABLE_COMPACT=1`）。
+
+**驗證指令（未來 self / contributor）：**
+
+```bash
+# 開新 ccp-deepseek session 看 statusline 第三行
+ccp-deepseek
+# Context: [...] 0k/1000k → ✅ paired env var 生效
+# Context: [...] 0k/200k  → ❌ 套錯了，回頭 grep CC binary 再 disasm 看 function B2 是否變了
+```
+
+驗證結果：
+- [ ] DeepSeek statusline 顯示 1000k（待 user 開新 session 確認）
+- [ ] AutoCompact 確實不觸發（需長 session 才能驗）
+
 ## 推薦實測順序
 
 1. **DeepSeek 先**（user 有 $1.85 餘額 + 5/31 前 75% off + 唯一給 SUBAGENT_MODEL 環境變數 = 最低風險）
