@@ -43,6 +43,7 @@ ccp-deepseek() {
   fi
 
   (
+    export CC_VENDOR=deepseek
     export ANTHROPIC_BASE_URL=http://127.0.0.1:9091
     export ANTHROPIC_AUTH_TOKEN=$DEEPSEEK_API_KEY
     export ANTHROPIC_MODEL=deepseek-v4-pro
@@ -66,6 +67,7 @@ ccp-kimi() {
     return 1
   fi
   (
+    export CC_VENDOR=kimi
     export ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic
     export ANTHROPIC_AUTH_TOKEN=$MOONSHOT_API_KEY
     export ANTHROPIC_MODEL=kimi-k2.5
@@ -82,6 +84,7 @@ ccp-kimi-cn() {
     return 1
   fi
   (
+    export CC_VENDOR=kimi-cn
     export ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic
     export ANTHROPIC_AUTH_TOKEN=$MOONSHOT_CN_API_KEY
     export ANTHROPIC_MODEL=kimi-k2.5
@@ -98,6 +101,7 @@ ccp-glm() {
     return 1
   fi
   (
+    export CC_VENDOR=glm
     export ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
     export ANTHROPIC_AUTH_TOKEN=$ZAI_API_KEY
     export ANTHROPIC_DEFAULT_OPUS_MODEL=GLM-4.7
@@ -117,6 +121,7 @@ ccp-glm-cn() {
     return 1
   fi
   (
+    export CC_VENDOR=glm-cn
     export ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic
     export ANTHROPIC_AUTH_TOKEN=$BIGMODEL_API_KEY
     export ANTHROPIC_DEFAULT_OPUS_MODEL=GLM-4.7
@@ -137,6 +142,7 @@ ccp-qwen() {
     return 1
   fi
   (
+    export CC_VENDOR=qwen
     export ANTHROPIC_BASE_URL=https://dashscope-intl.aliyuncs.com/apps/anthropic
     export ANTHROPIC_AUTH_TOKEN=$DASHSCOPE_INTL_API_KEY
     export ANTHROPIC_MODEL=qwen3-max
@@ -152,6 +158,7 @@ ccp-qwen-coding() {
     return 1
   fi
   (
+    export CC_VENDOR=qwen-coding
     export ANTHROPIC_BASE_URL=https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
     export ANTHROPIC_AUTH_TOKEN=$QWEN_CODING_PLAN_KEY
     export ANTHROPIC_MODEL=qwen3-coder-next
