@@ -205,6 +205,38 @@ jq -c 'select(.type=="attachment" and .attachment.type=="hook_blocking_error") |
 # 對 ccp-* session 應該 0 行（Stop hook 完全沒 fire）
 ```
 
+### 11. Cross-vendor `/resume` 炸 thinking signature
+
+**症狀：** vendor session（ds / kimi / etc 有 native thinking schema 的）開的對話，切到 Anthropic-backed CC `/resume` 該 session，第一次 user prompt 後 API Error 400 `Invalid signature in thinking block`（2026-05-03 in opus session resuming ds bfb74923 觀察到）。
+
+**Root cause：** `thinking` block 的 `signature` 欄位是 Anthropic API 的 cryptographic seal——server 用自己的 key 簽，client 後續送回 messages array 時 server verify 防 client 偽造 thinking 內容。Vendor（DeepSeek V4-Pro 等）有 native thinking schema (caveat 2)，但 signature 是 vendor 自己簽的，**Anthropic server 認不得**→ 400 reject 整個 messages array。
+
+**影響範圍 matrix：**
+
+| 從 → 到 | resume 結果 |
+|---|---|
+| vendor → Anthropic | ❌ thinking signature 不通用 |
+| Anthropic → vendor | ⚠️ 可能 OK（vendor validation 通常較寬鬆），未測 |
+| same vendor → same vendor | ✅ |
+| Anthropic → Anthropic | ✅ |
+
+**Workaround（按推薦度）：**
+
+1. **不 resume，summary paste 重起**：最簡單。失去自動 context 但保險。
+2. **`ccp-resume` wrapper**（✅ 已實作於 `shell/ccp-functions.sh`）：列 `~/.claude/projects/<hash>/*.jsonl`，fzf picker 顯示 mtime / model / sid / snippet，從 jsonl assistant message 抓 model name 映射 vendor，dispatch 對應 ccp-* function。$CC_VENDOR != target 時 warn + ask y/N。需要 `fzf` + `jq`。
+3. **strip thinking block from jsonl**：`jq 'del(.message.content[] | select(.type == "thinking"))'` 改寫 jsonl 後 resume。失去 model reasoning context 但能保留對話。
+4. **心理紀律 + statusline 顯示 CC_VENDOR**：cc-statusline 已 active；不 prevent 但 active session 能雙向 confirm 自己在哪。
+
+**沒辦法做的事：** CC 內建 `/resume` picker UI 顯示文字純粹來自 first user message string content（已驗證 jsonl entry types），**無 vendor/model metadata 欄位**給 picker 用 → 改不了 picker 顯示文字（除非污染 user message 加 prefix，但會讓 model 把 prefix 當 instruction）。
+
+**驗證方式：**
+
+```bash
+# 列 jsonl 是哪個 model 寫的
+jq -rc 'select(.type=="assistant") | .message.model' <session.jsonl> | head -1
+# claude-opus-4-7 → first-party；deepseek-v4-pro → vendor
+```
+
 ## Vendor-side discovered issues (during Stage 2)
 
 These are vendor backend bugs found during real testing, not test dimensions to verify. Likely vendor-specific — re-test for each new vendor.
@@ -249,6 +281,33 @@ curl -X POST https://api.deepseek.com/anthropic/v1/messages \
 - 跟 vendor model 討論 CC behavior 時，verify with raw log evidence
 
 **是否影響其他 vendor：** Likely all vendors 同 pattern（沒 train 在 CC 內部），just severity 跟 confidence 程度不同。Stage 2 onboard 時觀察各家 self-describe 質量。
+
+## Proxy-side discovered issues
+
+cc-vendor-bridge 自己的 `proxy/server.ts` 實作缺陷，非 vendor 也非 CC 端。任何新增的 per-vendor proxy daemon 都要回頭檢查同類問題。
+
+### 12. proxy 把已解壓 body 配 `Content-Encoding: br` → CC `BrotliDecompressionError`
+
+**症狀：** `ccp-deepseek`（或任何走 `proxy/server.ts` 的 vendor）跑一陣子後，CC 報 `API Error: BrotliDecompressionError fetching "http://127.0.0.1:9091/v1/messages?beta=true"`。proxy log 看似正常（`[proxy] POST /v1/messages → ...` 照印），upstream 也通。會「又壞了」是因為這是結構缺陷被環境引爆，不是偶發。
+
+**Root cause：** `proxy/server.ts` 原本 `return resp;` 直接轉發 upstream `Response`。proxy 只 `headers.delete("host")`，把 client 的 `accept-encoding: br` 一起帶給 DeepSeek → DeepSeek 回 `Content-Encoding: br` + brotli 壓縮 body。**Bun 的 `fetch()` 串流 `resp.body` 時透明解壓 brotli，但 `resp.headers` 仍保留 upstream 的 `Content-Encoding: br`**。`return resp` = 把「已解壓明文 body」配「`Content-Encoding: br` header」一起送回 CC，CC（2.1.143 起 undici 嚴格驗證）拿明文去 brotli 解碼 → 炸。fetch-passthrough proxy 的經典陷阱：runtime 已透明解碼 body，header 卻還在宣稱壓縮。舊版 CC undici 容忍此 mismatch，2.1.143 後不容忍 → 結構缺陷被 CC 升版引爆。
+
+**Reproducer (curl)：**
+
+```bash
+# --raw 關掉 curl 自動解碼，看 wire 真相
+curl --raw -sS -D - -o /tmp/b.bin \
+  -X POST "http://127.0.0.1:9091/v1/messages?beta=true" \
+  -H "content-type: application/json" -H "authorization: Bearer $DEEPSEEK_API_KEY" \
+  -H "accept-encoding: br" -H "anthropic-version: 2023-06-01" \
+  -d '{"model":"deepseek-v4-pro","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}'
+# 修前：header 有 Content-Encoding: br，但 body 是明文 JSON（brotli -d 解不開）
+# 修後：無 Content-Encoding，body 明文 JSON 直接可讀
+```
+
+**Workaround（已修，commit `1502f55`）：** `proxy/server.ts` 不再 `return resp`，改重組 Response 並刪掉 `content-encoding` + `content-length`（body 已被 Bun 解碼，這兩個 header 已不描述實際 body）。SSE 串流路徑（CC 實際走的）已驗證不受影響。對應 caveat 9 — 同一支 proxy，加 tool_choice rewrite 的 daemon 自己也有此 footgun。
+
+**對其他 vendor 的意義：** [stage-2-playbook.md](./stage-2-playbook.md) 提到的 per-vendor proxy（9092/9093…）只要是 fetch-passthrough 都會中同款。新 proxy 一律從一開始就 strip `content-encoding`/`content-length`，別等 `BrotliDecompressionError`。
 
 ## 推薦實測順序
 
