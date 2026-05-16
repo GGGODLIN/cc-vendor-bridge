@@ -45,7 +45,14 @@ const server = Bun.serve({
       if (!resp.ok) {
         console.log(`[proxy] upstream ${resp.status} ${resp.statusText}`);
       }
-      return resp;
+      const respHeaders = new Headers(resp.headers);
+      respHeaders.delete("content-encoding");
+      respHeaders.delete("content-length");
+      return new Response(resp.body, {
+        status: resp.status,
+        statusText: resp.statusText,
+        headers: respHeaders,
+      });
     } catch (err) {
       console.error(`[proxy] upstream unreachable: ${err instanceof Error ? err.message : err}`);
       return new Response(
