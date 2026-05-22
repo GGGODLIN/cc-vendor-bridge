@@ -242,21 +242,54 @@ print((short or ids or [""])[0])
     echo "ccp-local: 無法從 $v1/models 解析 model id (設 LOCAL_MODEL=... 強制)" >&2
     return 1
   fi
+  # Auto-detect n_ctx via llama-server /props (llama.cpp native; rapid-mlx 沒這 endpoint、會走 fallback)
+  local props_url="${url%/v1}/props"
+  local n_ctx
+  n_ctx=$(curl -sf -m 3 "$props_url" -H "Authorization: Bearer local" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get("default_generation_settings", {}).get("n_ctx", 0))
+except Exception:
+    print(0)
+' 2>/dev/null)
+  if [[ -z "$n_ctx" || "$n_ctx" == "0" ]]; then
+    n_ctx=200000  # safe fallback (rapid-mlx 或無 /props 的 server)
+    echo "ccp-local: /props 沒回 n_ctx、用 fallback $n_ctx" >&2
+  fi
+  echo "ccp-local: model=$model n_ctx=$n_ctx" >&2
   (
     export CC_VENDOR=rapid-mlx
     export ANTHROPIC_BASE_URL="$url"
-    export ANTHROPIC_AUTH_TOKEN=not-needed
+    # `not-needed` 是 rapid-mlx 時期 placeholder (rapid-mlx 不校驗 api key)。
+    # llama-server `--api-key local` 會校驗 → 401 Invalid API Key。改 default 為 `local` 跟
+    # opencode/aider-local 約定對齊；user 可用 ANTHROPIC_AUTH_TOKEN 自帶 token 蓋掉。
+    export ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-local}"
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-$model}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$model}"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$model}"
     export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-$model}"
-    # paired override (DISABLE_COMPACT=1 + CLAUDE_CODE_MAX_CONTEXT_TOKENS=N) 故意不設：
-    # 觸發 CC 在 model name 後加 [1m] suffix，rapid-mlx 端 reject。
-    # 代價 context 限 200K（CC fallback），AutoCompact ~187K 觸發 — 對 Qwen3.6 native 262K 少 62K。
+    # Auto-detect ctx: 蓋掉 CC 預設 Opus [1m] suffix、用 server 真實 n_ctx
+    # 舊註：rapid-mlx 時期故意不設、靠 CC fallback 200K。
+    # 現況：llama.cpp 不 reject、CC 默認加 [1m] (1M)、超出 server 真 n_ctx 會 truncate。
+    # 解法：查 /props 拿真 n_ctx 寫進 CC。AutoCompact 仍開、~90% 觸發、server 留 10% buffer
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS="${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-$n_ctx}"
     export API_TIMEOUT_MS="${API_TIMEOUT_MS:-3000000}"
     export ENABLE_TOOL_SEARCH="${ENABLE_TOOL_SEARCH:-auto}"
-    claude "$@"
+    # 起手用 sonnet alias：CC 對 Opus alias 強制套 [1m]/1M mode、ignore CLAUDE_CODE_MAX_CONTEXT_TOKENS。
+    # Sonnet alias 走 200K tier default、display 乾淨無 [1m]、跟 CLAUDE_CODE_MAX_CONTEXT_TOKENS 設定 align（≥ 200K 都安全）。
+    # User 仍可在 TUI 內 /model opus 切回 (會看到 [1m] / 1M、知道 trade-off 自己決定)。
+    # User 若 args 已含 --model 由 user 決定優先。
+    local has_model_arg=0
+    for arg in "$@"; do
+      [[ "$arg" == "--model" || "$arg" == --model=* ]] && has_model_arg=1
+    done
+    if (( has_model_arg )); then
+      claude "$@"
+    else
+      claude --model sonnet "$@"
+    fi
   )
 }
 
