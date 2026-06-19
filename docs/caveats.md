@@ -309,6 +309,89 @@ curl --raw -sS -D - -o /tmp/b.bin \
 
 **對其他 vendor 的意義：** [stage-2-playbook.md](./stage-2-playbook.md) 提到的 per-vendor proxy（9092/9093…）只要是 fetch-passthrough 都會中同款。新 proxy 一律從一開始就 strip `content-encoding`/`content-length`，別等 `BrotliDecompressionError`。
 
+## Bruce token proxy (internal test) specifics
+
+### 13. Bruce backend: 標籤 gpt-5.5 / 行為 gpt-5o (256K cap) + server-side tool 全 reject + claude-in-chrome MCP 不註冊
+
+Bruce token proxy (`https://bruce-token-proxy-431026649525.asia-east1.run.app`) HackMD doc 宣稱接 GPT-5.5，但 2026-06-19 一輪完整 probe 拆出**標籤跟行為不一致**且踩了 OpenAI-Responses translation proxy 該家族多個 footgun。記錄如下供未來接其他類似中轉站對照。
+
+#### 13a. Fake-label：標 gpt-5.5 但 context cap 256K (= gpt-5o 規格)
+
+**Probe 結果 (cache-bypassed, unique salt per call):**
+
+| raw chars | server `input_tokens` | HTTP |
+|---|---|---|
+| 300K | 263,879 | ✅ 200 |
+| 350K | — | ❌ 400 "conversation too large" |
+| 700K / 900K / 1100K | — | ❌ 400 同樣 error |
+
+對照 OpenAI 官方 GPT-5.5 是 **1,050,000 token context (2026-04-23 release)**。Bruce 真實 cap ~256K-300K，**跟 gpt-5o (256K) 高度吻合**。後端要嘛接 gpt-5o 卻 mislabel gpt-5.5，要嘛 proxy 自己加 cap。
+
+管理員聲稱「改成 1M」後重 probe，結果跟改前完全一致 (`request_id` 每次新 UUID 排除 cache 嫌疑)。Reproducer 帶 request_id 給管理員 server log 查 actual upstream model id 是最快定位方式。
+
+ccp-bruce function 設 `CLAUDE_CODE_MAX_CONTEXT_TOKENS=256000` 對齊實測 cap，避免 statusline 顯 1M 但 turn 中 4xx 邊撐。
+
+#### 13b. Server-side tool schema reject family
+
+跟 [caveat 9 DeepSeek tool_choice rejection](#9-deepseek-tool_choice-typetool-namex-rejected) 同 root cause family — Anthropic 私有 protocol 的 server-side tool / content block type 在 OpenAI-Responses translation proxy 全 schema reject。
+
+**WebSearch (`web_search_*` server-side tool)：**
+
+```
+400 tools.0.input_schema: Invalid input: expected record, re[ceived ...]
+```
+
+WebSearch 用 Anthropic 特有 input_schema 結構，OpenAI Responses API 沒這機制，proxy schema validator 直接擋。
+
+**Workaround：** subagent 改走 `mcp__chrome-devtools__new_page` (URL = `https://www.google.com/search?q=<query>`) + `mcp__chrome-devtools__take_snapshot` 拿 SERP。實證 2026-06-19 fd982862 session main 跑 3 個 chrome-devtools tool call 完整成功 0 error。
+
+**ToolSearch tool_result `tool_reference` block：**
+
+```
+400 messages.X.content: Invalid input
+```
+
+CC `ENABLE_TOOL_SEARCH=auto` 時走 deferred tool loading，ToolSearch 回 tool_result 內 `tool_reference` content block (CC + Anthropic 私有 protocol)，proxy 不認。
+
+實測 2026-06-19 devspace-pr-review-eval workflow：**41 個 subagent 36 個中 (87.8%)，100% pattern = ToolSearch → tool_result(tool_reference) → 400**。`messages.X.content` 的 X 分佈：4 (23x) / 6 (5x) / 8 (5x) / 10 (1x) / 12 (2x)，X 對應 subagent 第幾個 turn 呼叫 ToolSearch。
+
+**Workaround：** `export ENABLE_TOOL_SEARCH=off` — CC 不 register ToolSearch tool，所有 tool schemas upfront 載入 system prompt 繞過 deferred loop。代價 ~30-100K tokens system prompt (依 MCP/plugin 數)，對 256K cap 是顯著挑戰。
+
+**未來修 proxy：** strip `tool_reference` content block / 轉成標準 `text` block 含 schema JSON；server-side tool fail-soft 或 mock empty result。
+
+#### 13c. `mcp__claude-in-chrome__*` 對 Bruce subagent 不註冊
+
+2026-06-19 c36412ab session subagent 自己 report：
+
+> 「此 subagent 目前可用工具 schema 中沒有 `mcp__claude-in-chrome__navigate` / `get_page_text` / `tabs_close_mcp`。可見的瀏覽器相關工具是 `mcp__chrome-devtools__*`。」
+
+Mechanism 候選 (未實證): CC client model/vendor gate / claude-in-chrome extension 要 claude.ai auth / plugin 載入時點問題。
+
+**對策：** 用 `mcp__chrome-devtools__*` 取代。詳見 [[reference_claude_in_chrome_vendor_gate]] memory。
+
+#### 13d. Auth header 細節：必用 `ANTHROPIC_AUTH_TOKEN` 不能用 `ANTHROPIC_API_KEY`
+
+Bruce proxy 只接受 `Authorization: Bearer <token>` header，CC 對 `ANTHROPIC_AUTH_TOKEN` env 送 Bearer，對 `ANTHROPIC_API_KEY` env 送 `x-api-key` (Bruce reject 401 "Missing or malformed Authorization header")。
+
+ccp-bruce function 內 `unset ANTHROPIC_API_KEY` + `export ANTHROPIC_AUTH_TOKEN=$BRUCE_API_KEY` 防呆。HackMD doc 也明文 "一定要用 ANTHROPIC_AUTH_TOKEN, 不要用 ANTHROPIC_API_KEY"。
+
+#### 13e. Model resolution: 必加 `--model gpt-5.5` CLI flag
+
+User `~/.claude/settings.json` 若有 `"model": "claude-opus-4-7[1m]"`，CC 優先級 settings.json > env，env 強寫 `ANTHROPIC_MODEL=gpt-5.5` 也被蓋。CC TUI `/status` 顯示 opus-4-7[1m]，但 API 仍打 Bruce (因 base URL 不在 settings.json)。Bruce backend force-route 全部送過去的 model 都變 gpt-5.5，所以 API 對但 display 錯。
+
+**Fix：** ccp-bruce function 加 `claude --model gpt-5.5 "$@"`，CLI flag 優先級最高。詳見 [[reference_cc_vendor_model_resolution_precedence]] memory。
+
+#### 13f. C-1 harness: `--append-system-prompt` + 自動 propagate gate
+
+避免 subagent 浪費 turn 嘗試 WebSearch / claude-in-chrome：ccp-bruce 內加 `--append-system-prompt "Bruce tool map: ..."` CLI flag + `CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1` env，nudge 自動 propagate 到 Task tool subagent + nested subagent + workflow agent。詳見 [[reference_cc_append_system_prompt_subagent_harness]] memory。
+
+**對未來新 vendor 的 takeaway：**
+1. 接中轉站先驗 label 跟 backend 行為一致：probe context cap (raw chars vs server input_tokens)
+2. WebSearch + ToolSearch tool_reference 兩個 schema rejection 先掛預期、別期待跑通
+3. Auth header 用 `ANTHROPIC_AUTH_TOKEN` 而非 `API_KEY` (CC 對應送 Bearer / x-api-key)
+4. Model resolution 5 條 env 全寫 + `--model` CLI flag (settings.json 漏入會蓋)
+5. C-1 harness pattern 預設 enable，給 LLM 看 tool map 主動避雷
+
 ## 推薦實測順序
 
 1. **DeepSeek 先**（user 有 $1.85 餘額 + 5/31 前 75% off + 唯一給 SUBAGENT_MODEL 環境變數 = 最低風險）

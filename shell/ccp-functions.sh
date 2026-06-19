@@ -105,24 +105,44 @@ ccp-deepseek() {
 # }
 
 # ===== Zhipu GLM (z.ai international) =====
-# Source: https://docs.z.ai/scenario-example/develop-tools/claude
+# Source: https://docs.z.ai/devpack/tool/claude
+# Verified 2026-06-19 — GLM-5.2 released 2026-06-13, 1M ctx via `[1m]` suffix.
+# Subscription (GLM Coding Plan) and PAYG share same key + endpoint — auto-attached to account.
+#
+# Caveat #16: outer ANTHROPIC_MODEL leakage + ~/.claude/settings.json "model" field
+# both override env vars and can cause CC's internal claude-opus-*[1m] alias to bypass
+# ANTHROPIC_BASE_URL (same trap as ccp-bruce). Defenses (belt-and-suspenders):
+#   1. unset ANTHROPIC_API_KEY (must use AUTH_TOKEN as Bearer)
+#   2. Hard-set ANTHROPIC_MODEL / DEFAULT_*_MODEL (NOT ${VAR:-default}) — neutralize leaks
+#   3. --model 'glm-5.2[1m]' CLI flag — highest precedence, beats settings.json + env
+#
+# Caveat #17 (zsh-specific, found 2026-06-19): `glm-5.2[1m]` MUST be single-quoted in
+# zsh — `[1m]` is a glob character-class pattern, and an unquoted occurrence aborts
+# the function with "no matches found: glm-5.2[1m]". bash doesn't trip this (no NOMATCH
+# default). `setopt local_options no_nomatch` is a 防呆 net inside the subshell.
+#
+# 派工策略：Opus = glm-5.2[1m] 享 1M ctx；Sonnet/Haiku/Subagent = glm-4.7 省 quota
+# (GLM-4.7 = 1× 倍率永遠、GLM-5.2 peak 3× / off-peak 2× → promo 1× until 2026-09)
 ccp-glm() {
   if [[ -z "$ZAI_API_KEY" ]]; then
     echo "ccp-glm: ZAI_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
   (
+    setopt local_options no_nomatch 2>/dev/null
+    unset ANTHROPIC_API_KEY
     export CC_VENDOR=glm
     export ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
     export ANTHROPIC_AUTH_TOKEN=$ZAI_API_KEY
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-GLM-5.1}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-GLM-5.1}
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-GLM-4.7}
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-GLM-4.7-Flash}
-    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-GLM-4.7}
-    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    claude "$@"
+    export ANTHROPIC_MODEL='glm-5.2[1m]'
+    export ANTHROPIC_DEFAULT_OPUS_MODEL='glm-5.2[1m]'
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=glm-4.7
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.7
+    export CLAUDE_CODE_SUBAGENT_MODEL=glm-4.7
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000
+    export API_TIMEOUT_MS=3000000
+    export ENABLE_TOOL_SEARCH=auto
+    claude --model 'glm-5.2[1m]' "$@"
   )
 }
 
@@ -191,6 +211,113 @@ ccp-mimo-payg() {
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     claude "$@"
   )
+}
+
+# ===== Bruce token proxy (internal test, "GPT-5.5" backend) =====
+# Source: https://hackmd.io/@vTE3u1D4ROSvEVdRv4OW5Q/BJcnidZzfl
+# Probe verified 2026-06-18:
+#   - Anthropic SSE format, backed by OpenAI Responses (resp_* ids)
+#   - /v1/models 404; backend force-routes to "gpt-5.5" regardless of client model
+#   - Auth must be Authorization: Bearer (x-api-key rejected → 401)
+#     → MUST use ANTHROPIC_AUTH_TOKEN (which CC sends as Bearer), NOT ANTHROPIC_API_KEY
+#   - Caller's ANTHROPIC_MODEL / DEFAULT_*_MODEL FORCED off (no ${VAR:-default}):
+#     CC's `claude-opus-*[1m]` alias has internal Anthropic-only routing that bypasses
+#     ANTHROPIC_BASE_URL; if outer shell has any ANTHROPIC_MODEL lingering, leakage
+#     would silently route to api.anthropic.com instead of Bruce.
+ccp-bruce() {
+  if [[ -z "$BRUCE_API_KEY" ]]; then
+    echo "ccp-bruce: BRUCE_API_KEY not set. See shell/secrets.example" >&2
+    return 1
+  fi
+  (
+    export CC_VENDOR=bruce
+    export ANTHROPIC_BASE_URL=https://bruce-token-proxy-431026649525.asia-east1.run.app
+    export ANTHROPIC_AUTH_TOKEN=$BRUCE_API_KEY
+    unset ANTHROPIC_API_KEY  # HackMD warns: must use AUTH_TOKEN, NOT API_KEY
+    # Force model pins — intentionally NOT using ${VAR:-default} to neutralize
+    # any outer ANTHROPIC_MODEL=claude-opus-4-7[1m] that would route to Anthropic.
+    export ANTHROPIC_MODEL=gpt-5.5
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5.5
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.5
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.5
+    export CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.5
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    # FORCE off (not ${VAR:-off}): deferred tool loading emits `tool_reference`
+    # content blocks that Bruce proxy rejects with 400 messages.X.content Invalid.
+    # Verified 2026-06-19: 36/36 hit subagent jsonl in devspace-pr-review-eval
+    # all show ToolSearch → tool_result(tool_reference) → 400. Trade-off: all
+    # tool schemas now load upfront, eating ~30-100K tokens of the 256K context.
+    export ENABLE_TOOL_SEARCH=off
+    # Match ccp-deepseek / ccp-mimo convention — vendor sessions disable client-side
+    # auto-compact. Context cap pinned at Bruce's empirically measured ceiling.
+    #
+    # Backend reality (bin/probe-bruce-context-cap.sh, cache-bypassed):
+    #   - GPT-5.5 official API ctx: 1,050,000 tokens
+    #   - 2026-06-19 morning probe : 263K input_tokens OK / ≥350K raw → HTTP 400
+    #     "conversation too large" (honest reject)
+    #   - 2026-06-19 evening reprobe: 380K raw → 267,344 input_tokens OK /
+    #     390K raw → ⚠ HTTP 200 + empty content + input_tokens=0 (SILENT DROP).
+    #     Boundary moved up ~4K tokens; failure mode regressed from honest 400
+    #     to silent 200-empty. CC client would mistake an empty completion for
+    #     a real successful turn — strictly worse than the old behavior.
+    #   - Setting client cap > ~256K reads wide in statusline but mid-turn
+    #     silently drops once payload crosses ~270K input_tokens.
+    export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-256000}
+    # Vendor-specific tool map nudge (C-1 harness — verified via CC binary strings 2026-06-19):
+    #   - --append-system-prompt CLI flag injects tool map into main session
+    #   - CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1 propagates the same to every Task-tool
+    #     subagent + nested subagents + workflow agents (gate documented in CC binary)
+    #   - main CC sessions don't set these → zero pollution
+    export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1
+    # --model CLI flag has highest precedence (above ~/.claude/settings.json model
+    # and ANTHROPIC_MODEL env). Without this, settings.json "model":"claude-opus-4-7[1m]"
+    # would override our env force-pin and CC TUI would display the wrong model
+    # (API still routes to Bruce because BASE_URL is not in settings.json).
+    claude --model gpt-5.5 --append-system-prompt "Bruce backend tool map (server-side schema constraints, ~256K input_tokens cap; backend behaves like gpt-5o not real gpt-5.5). Tool availability when CC_VENDOR=bruce: WebSearch is REJECTED (server-side tool schema not accepted by proxy, fails with 400 tools.0.input_schema Invalid) — use mcp__chrome-devtools__new_page with https://www.google.com/search?q=<query> followed by mcp__chrome-devtools__take_snapshot to get SERP. mcp__claude-in-chrome__* is NOT registered (model/vendor gate) — use mcp__chrome-devtools__* instead. AVAILABLE: WebFetch, mcp__chrome-devtools__*, mcp__shopify-dev-mcp__*, Bash with gh api or curl. Apply this map proactively when dispatching to subagents or running research workflows — do not waste turns trying WebSearch or mcp__claude-in-chrome__*." "$@"
+  )
+}
+
+# ===== Codex side: codex CLI through Bruce (OpenAI Responses path) =====
+# Companion of ccp-bruce (Anthropic-side claude wrapper). Same backend, different
+# wire — codex CLI 0.139+ speaks OpenAI Responses API natively; Bruce exposes
+# both Anthropic SSE (for CC) and OpenAI Responses (for codex) on the same host.
+#
+# Mechanism: top-level `-c model_provider=bruce` is a per-invocation override
+# (codex top-level OPTIONS, applies to every subcommand). NO restart, NO
+# CODEX_HOME swap, NO change to default provider — the ChatGPT OAuth bundle in
+# ~/.codex/auth.json stays intact, business team quota untouched.
+#
+# Prerequisite (one-time): ~/.codex/config.toml must contain
+#   [model_providers.bruce]
+#   name = "Bruce"
+#   base_url = "https://bruce-token-proxy-431026649525.asia-east1.run.app/v1"
+#   wire_api = "responses"
+#   env_key = "BRUCE_API_KEY"
+# Setup done 2026-06-19.
+#
+# Usage:
+#   codex-bruce                              # interactive via bruce
+#   codex-bruce review --base main           # native review (OpenAI-tuned subagent) via bruce
+#   codex-bruce exec "<task>"                # exec via bruce
+#   codex-bruce exec --skip-git-repo-check --output-schema s.json -o out.json "..." < /dev/null
+#
+# Notes:
+#   - Plugin (/codex:review, /pr-review) still binds to default openai provider
+#     by design — to swap plugin side too you'd need to flip the default in
+#     ~/.codex/config.toml (NOT done here, since the whole point of codex-bruce
+#     is "OpenAI default, bruce on demand").
+#   - Native `codex review` subcommand walks the SAME review subagent the plugin
+#     uses via `runAppServerReview` (OpenAI-tuned prompt, calibration preserved).
+#     Going through `codex review --base main` via codex-bruce thus keeps quality.
+#   - Bruce backend force-routes everything to gpt-5.5 regardless of -c model=...
+#     so `model = "gpt-5.5"` in config.toml is consistent across openai/bruce.
+codex-bruce() {
+  if [[ -z "$BRUCE_API_KEY" ]]; then
+    echo "codex-bruce: BRUCE_API_KEY not set. See shell/secrets.example" >&2
+    return 1
+  fi
+  codex -c model_provider=bruce "$@"
 }
 
 # ===== Rapid-MLX local (auto-detect model from running serve) =====
@@ -338,6 +465,7 @@ Available cc-vendor-bridge functions:
   ccp-glm           → Zhipu GLM-5.1 / 4.7-Flash (z.ai intl)
   ccp-mimo          → Xiaomi MiMo V2.5-Pro Token Plan (Singapore subscription)
   ccp-mimo-payg     → Xiaomi MiMo V2.5-Pro (intl PAYG)
+  ccp-bruce         → Bruce token proxy (internal test, "GPT-5.5" backend; force-routed)
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
@@ -348,7 +476,16 @@ Available cc-vendor-bridge functions:
 Disabled (API key not configured):
   ccp-kimi / ccp-kimi-cn / ccp-glm-cn / ccp-qwen / ccp-qwen-coding
 
-Each opens a Claude Code session backed by that vendor.
+Codex side (OpenAI Responses path, runs codex CLI not claude):
+  codex-bruce       → codex CLI through Bruce (per-invocation -c override)
+                      Default codex provider stays openai (ChatGPT OAuth) — only
+                      this wrapper routes to bruce; plugin /codex:review unaffected.
+                      Examples:
+                        codex-bruce review --base main      (native review via bruce)
+                        codex-bruce exec "<task>"
+                        codex-bruce                          (interactive)
+
+Each ccp-* opens a Claude Code session backed by that vendor.
 Pass any args you'd pass to 'claude' (e.g. '-c', '/path/to/proj').
 
 Per-call env override (use \${VAR:-default} pattern):

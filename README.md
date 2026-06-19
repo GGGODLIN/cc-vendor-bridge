@@ -29,7 +29,7 @@ docs/                              # research + design notes + Stage 2 protocol
 ├── path-1-sidecar-design.md       # plugin pattern (planned)
 ├── caveats.md                     # 10 caveats catalogued; DeepSeek results
 ├── stage-2-playbook.md            # onboarding protocol for new vendors
-└── pricing-snapshot-2026-05.md    # vendor pricing (stale-by 2026-08)
+└── pricing-snapshot.md            # vendor pricing (per-vendor LAST_VERIFIED inside)
 
 shell/
 ├── ccp-functions.sh               # 7 zsh functions (ccp-deepseek / kimi / glm / qwen variants)
@@ -91,7 +91,7 @@ See [`docs/caveats.md`](docs/caveats.md) for full test plan + DeepSeek verificat
 
 ## Stale-by
 
-Pricing + benchmark data: **2026-08-03**. CN models update monthly.
+Pricing + benchmark data: per-vendor `LAST_VERIFIED` table inside [`docs/pricing-snapshot.md`](docs/pricing-snapshot.md). Rule: any row > 30 days from `LAST_VERIFIED` MUST be re-verified before being cited in a decision (learned 2026-06-19 after DeepSeek $1.50/$4.50 misquote, real number $0.435/$0.87).
 
 ## Inspiration
 
