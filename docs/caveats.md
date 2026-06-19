@@ -468,3 +468,105 @@ User `~/.claude/settings.json` 若有 `"model": "claude-opus-4-7[1m]"`，CC 優�
 - [ ] 3. MCP tool schema:
 - [ ] 4. CLAUDE.md adherence:
 - [ ] 5. Subagent dispatch:
+
+## Shell wrapper specifics (cc-vendor-bridge `shell/ccp-functions.sh`)
+
+編號從 #16 開始接 shell 註解內既有編號（#14/#15 跳號，shell `ccp-glm` 在 commit `01f84c5` 已用 #16/#17）。
+
+### 16. Model resolution precedence: `--model` CLI > settings.json > env (a.k.a. env leakage)
+
+**症狀：** `ccp-glm` / `ccp-bruce` 等 vendor wrapper 啟動後出現任一狀況：
+- statusline / `/status` 顯示對的 vendor model，但 traffic 真的打 Anthropic
+- vendor session 內 `claude-opus-*[1m]` alias 莫名 bypass `ANTHROPIC_BASE_URL` 走 Anthropic-only routing
+
+**Root cause：** CC model resolution 三層 precedence（高→低）：
+
+1. `claude --model X` CLI flag
+2. `~/.claude/settings.json` 內 `"model": "..."`
+3. 環境變數 `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL`
+
+ccp-* wrapper 若只設 env vars，user `settings.json` 內若有 `"model": "claude-opus-4-7[1m]"` 仍勝出。**更深一層問題：CC 內部對 `claude-opus-*[1m]` alias 有 Anthropic-only routing 路徑會 bypass `ANTHROPIC_BASE_URL`**——所以這不只是「TUI 顯示錯」，是 traffic 真的會繞回 Anthropic、vendor session 變成 Anthropic session 而 user 完全不察覺。
+
+Outer shell 殘留的 `ANTHROPIC_MODEL=claude-opus-*[1m]` env 同樣觸發此 trap，wrapper 用 `${VAR:-default}` 軟設預設值不會覆蓋已存在的 outer env。
+
+**對 ccp-* 的影響：** 任何「vendor session 但 model 解析回 Anthropic alias」case 都 silently bypass `ANTHROPIC_BASE_URL`。ccp-bruce（2026-06-18 首發現）+ ccp-glm（2026-06-19 同樣中槍）都驗證過。
+
+**Defenses（belt-and-suspenders、三道都要）：**
+
+1. **`unset ANTHROPIC_API_KEY`** — vendor 用 `ANTHROPIC_AUTH_TOKEN`（Bearer），殘留的 `ANTHROPIC_API_KEY`（x-api-key）會干擾 auth
+2. **Hard-set `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL`**（**不用** `${VAR:-default}` 軟設）— 中和 outer shell env 殘留
+3. **`claude --model 'vendor-model' "$@"` CLI flag** — 優先級最高，覆蓋 settings.json + env
+
+**ccp-glm 已套用（2026-06-19、`shell/ccp-functions.sh:126-147`）：** 三條全套；參考 ccp-bruce 同 commit 段亦如此處理。
+
+**See also：** [caveat 13e](#13e-model-resolution-必加---model-gpt-55-cli-flag) Bruce 同 issue；shell 註解內亦標 "Caveat #16"。
+
+### 17. zsh `[1m]` glob abort (shell wrapper 特有)
+
+**症狀：** `ccp-glm` 在 zsh 啟動立即 abort 整個 function，stderr 印：
+
+```
+zsh: no matches found: glm-5.2[1m]
+```
+
+CC 完全沒啟動。bash 不踩此雷。
+
+**Root cause：** zsh 預設 `NOMATCH` 行為——未 quote 的 glob pattern 找不到 match 時 abort。`glm-5.2[1m]` 內 `[1m]` 是 zsh 的 **character class glob**（match `1` 或 `m`），shell expansion 階段嘗試展開、CWD 無 file match → abort。bash 沒有 `NOMATCH` default 所以無感。
+
+觸發點：`export ANTHROPIC_MODEL=glm-5.2[1m]` 跟 `claude --model glm-5.2[1m]` 兩處都會 trigger。
+
+**Defenses（belt-and-suspenders）：**
+
+1. **單引號 quote literal value**：`export ANTHROPIC_MODEL='glm-5.2[1m]'`、`claude --model 'glm-5.2[1m]'`
+2. **`setopt local_options no_nomatch`** subshell 內 disable NOMATCH 當防呆網（bash 上是 no-op、用 `2>/dev/null` swallow error）
+
+**ccp-glm 已套用（2026-06-19、`shell/ccp-functions.sh:132-146`）：** 兩道防線都有。
+
+**對其他 vendor 的意義：** 任何 vendor model id 內含 `[` / `]`（DeepSeek `deepseek-v4-pro[1m]`、Anthropic `claude-opus-4-7[1m]` 等）都中。新 wrapper 預設值若寫 `[1m]` 一律 quote + setopt 兩道做。
+
+**See also：** shell 註解內亦標 "Caveat #17"；[[reference_zsh_bracket_glob_abort_model_id]] memory。
+
+## Vendor billing calibration
+
+### 18. z.ai GLM Coding Plan：1 CC turn ≈ 5-6 prompts（不是文件 claim 的 1）
+
+**症狀：** GLM Coding Lite-Monthly $14.58 訂閱（80 prompts / 5h ceiling）跑 **1 個** 有 tool fanout 的 user prompt，5h dashboard quota 跳 **7%**（= ~5-6 prompts / 80）。z.ai 官方 doc claim「1 prompt = 15-20 model invocations」與實測差 **5×**。
+
+**Probe data（2026-06-19 session `661130b0`）：**
+
+- 1 substantive user prompt（"GLM 5.2 vs Claude API 差別"研究類）
+- 19 unique API calls / Tool 分布：WebSearch 7（hook 全擋）+ Read 6 + Bash 5 + ToolSearch 4 + Skill 1
+- 純 main session（無 Workflow / Task / subagent）
+- `cache_read` 956K / cache miss 100K → cache hit **90.5%**
+- output 21K tokens
+- Dashboard 5h quota **7%**
+
+**算法對位：**
+
+| 假設算法 | 預期 5h quota | 實測差 |
+|---|---|---|
+| 1 user prompt = 1 unit | 1.25% | 實測 5.6× 高 |
+| z.ai 文件 claim「1 prompt = 15-20 invocations」 | 1.25% | 同上 |
+| 1 API call = 1 unit | 23.75% | 實測 3.4× 低 |
+| **5-6 prompts per CC turn**（實測反推）| 6.3-7.5% | ✅ **match** |
+
+→ z.ai 真實算法 ≈ **1 個 CC turn 算 5-6 prompts**。
+
+**對 Lite plan 預估容量的修正：**
+
+| 維度 | 文件 claim 推算 | 實測校準 |
+|---|---|---|
+| Lite 5h ceiling（80 prompts）| 80 CC turn | **~13-16 CC turn** |
+| Lite 週 ceiling（400 prompts）| 400 CC turn | **~67-80 CC turn** |
+
+**Scope warning：** 本校準**只**覆蓋「main session heavy tool fanout」場景。subagent / Workflow 計費機制仍是黑盒、不能線性外推：
+
+- Main session 1 turn + 純 prompt 無 tool → 未驗（可能 < 2%）
+- Main session 1 turn + 1 個 subagent → 未驗（可能 1.5-2× 加成）
+- Workflow fan-out N agent → 未驗（可能 N × main turn quota）
+
+→ S1 baseline / S3 subagent / S5 Workflow probe 仍是 unknown，要單獨驗。
+
+**對其他 vendor 的意義：** 任何「按 prompt 計費」的訂閱制（z.ai Lite/Pro/Max、MiMo Token Plan、Anthropic Max 等）都應該 probe「1 CC turn 真實 prompt 數」、別信文件數字推算容量。
+
+**See also：** [[reference_zai_glm_cc_billing_calibration_2026_06_19]] memory + 試玩 plan [[project_glm_lite_trial_2026_06_19]]。
