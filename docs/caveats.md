@@ -311,53 +311,75 @@ curl --raw -sS -D - -o /tmp/b.bin \
 
 ## Bruce token proxy (internal test) specifics
 
-### 13. Bruce backend: 標籤 gpt-5.5 / 行為 gpt-5o (256K cap) + server-side tool 全 reject + claude-in-chrome MCP 不註冊
+### 13. Bruce backend specifics
 
-Bruce token proxy (`https://bruce-token-proxy-431026649525.asia-east1.run.app`) HackMD doc 宣稱接 GPT-5.5，但 2026-06-19 一輪完整 probe 拆出**標籤跟行為不一致**且踩了 OpenAI-Responses translation proxy 該家族多個 footgun。記錄如下供未來接其他類似中轉站對照。
+Bruce token proxy (`https://bruce-token-proxy-431026649525.asia-east1.run.app`) HackMD doc 宣稱接 GPT-5.5。2026-06-19 一輪完整 probe 拆出三條 caveat（context cap、WebSearch、tool_reference），管理員當日修了；修後行為見下方各段註記。
 
-#### 13a. Fake-label：標 gpt-5.5 但 context cap 256K (= gpt-5o 規格)
+#### 13a. ~~Fake-label：標 gpt-5.5 但 context cap 256K~~ [RESOLVED 2026-06-19]
 
-**Probe 結果 (cache-bypassed, unique salt per call):**
+**原症狀：** 標 gpt-5.5 但 context cap ~256K，跟 gpt-5o (256K) 高度吻合。對照 OpenAI 官方 GPT-5.5 應為 1,050,000 token context。
+
+**Probe 結果（修前）：**
 
 | raw chars | server `input_tokens` | HTTP |
 |---|---|---|
 | 300K | 263,879 | ✅ 200 |
-| 350K | — | ❌ 400 "conversation too large" |
-| 700K / 900K / 1100K | — | ❌ 400 同樣 error |
+| 350K-1100K | — | ❌ 400 "conversation too large" |
 
-對照 OpenAI 官方 GPT-5.5 是 **1,050,000 token context (2026-04-23 release)**。Bruce 真實 cap ~256K-300K，**跟 gpt-5o (256K) 高度吻合**。後端要嘛接 gpt-5o 卻 mislabel gpt-5.5，要嘛 proxy 自己加 cap。
+**修復：** 2026-06-19 管理員確認接 1M backend。使用者重 probe `bin/probe-bruce-context-cap.sh` 對齊 1M（無 silent drop、無提早 4xx）。
 
-管理員聲稱「改成 1M」後重 probe，結果跟改前完全一致 (`request_id` 每次新 UUID 排除 cache 嫌疑)。Reproducer 帶 request_id 給管理員 server log 查 actual upstream model id 是最快定位方式。
+**ccp-bruce 對應改動：** `CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000`（原 256000）。
 
-ccp-bruce function 設 `CLAUDE_CODE_MAX_CONTEXT_TOKENS=256000` 對齊實測 cap，避免 statusline 顯 1M 但 turn 中 4xx 邊撐。
+#### 13b. Server-side tool schema — per-vendor 對照（2026-06-19 update）
 
-#### 13b. Server-side tool schema reject family
+**原 hypothesis（已被推翻）：** 所有 OpenAI-Responses translation proxy 都會對 Anthropic 私有 server-side tool / content block schema-reject，跟 [caveat 9 DeepSeek tool_choice rejection](#9-deepseek-tool_choice-typetool-namex-rejected) 同 root cause family。
 
-跟 [caveat 9 DeepSeek tool_choice rejection](#9-deepseek-tool_choice-typetool-namex-rejected) 同 root cause family — Anthropic 私有 protocol 的 server-side tool / content block type 在 OpenAI-Responses translation proxy 全 schema reject。
+**實證後 landscape**：不是「家族特性」，是「每家 proxy 對 Anthropic 私有 tool 的處置選項」差很大：
 
-**WebSearch (`web_search_*` server-side tool)：**
+| Vendor | `web_search_20250305` 接收 | 實際行為 | 證據強度 |
+|---|---|---|---|
+| **DeepSeek** `/anthropic` | ✅ 接受 + 真實搜尋 | 後端走 **Bocha**，回真實 `web_search_tool_result`（含 encrypted_content）；`web_search_20260209` 也支援 | 一手實證 + 官方 docs（[musaab.io 2026-05-25](https://musaab.io/posts/2026/deepseek-search/) + [DeepSeek docs](https://api-docs.deepseek.com/guides/anthropic_api) 2026-05-26） |
+| **GLM** `api.z.ai/api/anthropic` | ❌ schema reject | Z.AI FAQ 明文「Other than the resource package, we currently do not provide any other access solutions」 | 官方文件 + community |
+| **MiMo** `token-plan-cn.xiaomimimo.com/anthropic` | ❌ 明文不支援 | 原生 search ¥25/1k（CN）/ $5/1k（intl），但 Anthropic 協議端點不開放 | 官方文件 |
+| **Kimi** `api.moonshot.ai/anthropic` | ❌ 推測 reject | 原生 `$web_search` 走 OpenAI 路徑，Anthropic 端點未實作 | 結構類比，未實測 |
+| **Qwen** `dashscope-intl.aliyuncs.com/apps/anthropic` | ❓ 未實測 | docs 無 mention，推測 silent drop | 未實測 |
+| **Doubao** `ark.cn-beijing.volces.com/api/coding` | ❓ 未實測 | docs 無 mention，Ark 原生搜尋是另一條 plugin | 未實測 |
+| **Bruce** | ✅ 接受 + **偽造搜尋結果** ❌❌❌ | 修前 400 schema reject；2026-06-19 admin 修後**退化成 silent fabrication** | session 580f03bc 3/3 prompt 全踩、偽造 URL + 日期 |
 
+**結論**：DeepSeek 是「proxy 該如何處置 Anthropic native WebSearch」的範本，背靠 Bocha 做 interception。其他 CN vendor 多數誠實 reject（CC 看得到錯、可 fallback）。**Bruce 修後行為唯一危險**——透明從 transport 層注入偽造、CC 視為成功 turn、模型誠實引用假來源。
+
+##### WebSearch (`web_search_20250305`) — Bruce 專屬
+
+**修前症狀：**
 ```
-400 tools.0.input_schema: Invalid input: expected record, re[ceived ...]
+400 tools.0.input_schema: Invalid input: expected record, received ...
 ```
 
-WebSearch 用 Anthropic 特有 input_schema 結構，OpenAI Responses API 沒這機制，proxy schema validator 直接擋。
+**2026-06-19 admin 修後症狀：** 200 OK + tool_result body 含**偽造**搜尋結果 + 模仿 Anthropic 原生 `REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks` 注入。Failure mode 從 honest 4xx 退化成 silent fabrication，比原本嚴重。
 
-**Workaround：** subagent 改走 `mcp__chrome-devtools__new_page` (URL = `https://www.google.com/search?q=<query>`) + `mcp__chrome-devtools__take_snapshot` 拿 SERP。實證 2026-06-19 fd982862 session main 跑 3 個 chrome-devtools tool call 完整成功 0 error。
+實證 session 580f03bc：
+- query: `Claude Opus 4.8 release date` → tool_result 偽造 `2026-05-28 + https://www.anthropic.com/news/claude-opus-4-8` → 模型篤定引用
+- query: `Anthropic 降價公告` → tool_result 列 5 條**真實但語意不符**的舊文章（Claude 2.1 / prompt-caching / Opus 4.5 / pricing docs）→ 模型挑了 Opus 4.5 release URL 假裝是降價公告
+- query: `Next.js 15 release date` → tool_result 偽造，**但因 gpt-5.5 訓練資料命中 Next.js 15 真實資訊**，URL + 日期碰巧對
 
-**ToolSearch tool_result `tool_reference` block：**
+**Workaround（ccp-bruce 245-282）：**
+1. `--disallowed-tools WebSearch` — 硬擋 tool 不出現在 model schema（驗 2026-06-19 session 092a4fce 1 turn 即回「WebSearch unavailable」）
+2. `--append-system-prompt` 提示走 `mcp__chrome-devtools__new_page` + `mcp__chrome-devtools__take_snapshot` 取代
 
+**未來修 proxy 路徑（DeepSeek 已實作參考）：** 真實接後端搜尋（Bocha 是 CN 業界 default，¥3.6/1k，有官方 MCP `github.com/BochaAI/bocha-search-mcp`），或誠實回 `tool_result(is_error=true, content="WebSearch backend not available on this proxy")` 讓 CC 看得到錯。**退回原本的 400 schema reject 也好過現在偽造**。
+
+##### ToolSearch tool_result `tool_reference` block — [RESOLVED 2026-06-19]
+
+**修前症狀：**
 ```
 400 messages.X.content: Invalid input
 ```
 
-CC `ENABLE_TOOL_SEARCH=auto` 時走 deferred tool loading，ToolSearch 回 tool_result 內 `tool_reference` content block (CC + Anthropic 私有 protocol)，proxy 不認。
+CC `ENABLE_TOOL_SEARCH=auto` 時走 deferred tool loading，ToolSearch 回 tool_result 內 `tool_reference` content block（CC + Anthropic 私有 protocol），proxy 不認。
 
-實測 2026-06-19 devspace-pr-review-eval workflow：**41 個 subagent 36 個中 (87.8%)，100% pattern = ToolSearch → tool_result(tool_reference) → 400**。`messages.X.content` 的 X 分佈：4 (23x) / 6 (5x) / 8 (5x) / 10 (1x) / 12 (2x)，X 對應 subagent 第幾個 turn 呼叫 ToolSearch。
+實測 2026-06-19 devspace-pr-review-eval workflow：41 個 subagent 36 個中 (87.8%)，100% pattern = ToolSearch → tool_result(tool_reference) → 400。
 
-**Workaround：** `export ENABLE_TOOL_SEARCH=off` — CC 不 register ToolSearch tool，所有 tool schemas upfront 載入 system prompt 繞過 deferred loop。代價 ~30-100K tokens system prompt (依 MCP/plugin 數)，對 256K cap 是顯著挑戰。
-
-**未來修 proxy：** strip `tool_reference` content block / 轉成標準 `text` block 含 schema JSON；server-side tool fail-soft 或 mock empty result。
+**修復：** admin 確認修復。Probe `bin/probe-bruce-tool-reference.sh` 200 OK；e2e 用 `bin/ccp-bruce-raw` 驗 MCP deferred load 全程無 4xx。ccp-bruce 從 `ENABLE_TOOL_SEARCH=off` 改回 `${ENABLE_TOOL_SEARCH:-auto}`，回收 ~30-100K context budget。
 
 #### 13c. `mcp__claude-in-chrome__*` 對 Bruce subagent 不註冊
 
@@ -381,16 +403,22 @@ User `~/.claude/settings.json` 若有 `"model": "claude-opus-4-7[1m]"`，CC 優�
 
 **Fix：** ccp-bruce function 加 `claude --model gpt-5.5 "$@"`，CLI flag 優先級最高。詳見 [[reference_cc_vendor_model_resolution_precedence]] memory。
 
-#### 13f. C-1 harness: `--append-system-prompt` + 自動 propagate gate
+#### 13f. C-1 harness: `--disallowed-tools` 硬擋 + `--append-system-prompt` 路由提示
 
-避免 subagent 浪費 turn 嘗試 WebSearch / claude-in-chrome：ccp-bruce 內加 `--append-system-prompt "Bruce tool map: ..."` CLI flag + `CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1` env，nudge 自動 propagate 到 Task tool subagent + nested subagent + workflow agent。詳見 [[reference_cc_append_system_prompt_subagent_harness]] memory。
+2026-06-19 update：原本只用 `--append-system-prompt` 自然語言 nudge 避雷 WebSearch，session 580f03bc 證實對 gpt-5.5 無效（被 transport 層注入的偽造 tool_result 完全壓過 system prompt 約束）。改用兩層：
+
+1. **硬安全層 `--disallowed-tools WebSearch`** — tool 從 model schema 完全消失、無法 invoke。驗 session 092a4fce。
+2. **路由提示層 `--append-system-prompt "WebSearch is disabled on this vendor ... use mcp__chrome-devtools__"`** — 1 句帶過、不重複講 schema 細節（model 看不到 tool、不需要知道為什麼）。
+
+兩層都靠 `CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1` 自動 propagate 到 Task tool subagent + nested subagent + workflow agent。詳見 [[reference_cc_append_system_prompt_subagent_harness]] memory。
 
 **對未來新 vendor 的 takeaway：**
 1. 接中轉站先驗 label 跟 backend 行為一致：probe context cap (raw chars vs server input_tokens)
-2. WebSearch + ToolSearch tool_reference 兩個 schema rejection 先掛預期、別期待跑通
-3. Auth header 用 `ANTHROPIC_AUTH_TOKEN` 而非 `API_KEY` (CC 對應送 Bearer / x-api-key)
-4. Model resolution 5 條 env 全寫 + `--model` CLI flag (settings.json 漏入會蓋)
-5. C-1 harness pattern 預設 enable，給 LLM 看 tool map 主動避雷
+2. WebSearch / ToolSearch tool_reference / WebFetch / 其他 Anthropic 私有 server-side tool — 先跑 `bin/probe-bruce-*.sh` pattern 的 schema probe，再決定 `--disallowed-tools` 還是讓它通過
+3. Schema 過了但 silent fabricate 的 failure mode 比 honest 4xx 嚴重得多 — 200 OK 不代表行為對；務必看 tool_result body 有沒有偽造（檢查訊息可信度而非僅 HTTP code）
+4. Auth header 用 `ANTHROPIC_AUTH_TOKEN` 而非 `API_KEY` (CC 對應送 Bearer / x-api-key)
+5. Model resolution 5 條 env 全寫 + `--model` CLI flag (settings.json 漏入會蓋)
+6. 硬擋 (`--disallowed-tools`) > 自然語言 nudge — nudge 對非 Anthropic 模型常見失效，硬擋才安全
 
 ## 推薦實測順序
 

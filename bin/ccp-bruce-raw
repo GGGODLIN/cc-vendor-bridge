@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Throwaway: ccp-bruce variant WITH NO PROXY WORKAROUNDS.
+#
+# Strips two defenses that ccp-bruce adds:
+#   1. ENABLE_TOOL_SEARCH=off    (force-eager tool load to dodge tool_reference reject)
+#   2. --append-system-prompt …  (nudge model away from WebSearch / claude-in-chrome)
+#
+# Used only to e2e-verify Bruce admin's claimed fixes for the
+# 2026-06-19 issues 2 (WebSearch tool schema) + 3 (tool_reference block).
+# Once L2 passes, fold env changes back into shell/ccp-functions.sh ccp-bruce
+# and delete this file.
+
+set -uo pipefail
+: "${BRUCE_API_KEY:?BRUCE_API_KEY not set; see shell/secrets.example}"
+
+export CC_VENDOR=bruce
+export ANTHROPIC_BASE_URL=https://bruce-token-proxy-431026649525.asia-east1.run.app
+export ANTHROPIC_AUTH_TOKEN=$BRUCE_API_KEY
+unset ANTHROPIC_API_KEY
+export ANTHROPIC_MODEL=gpt-5.5
+export ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5.5
+export ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.5
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.5
+export CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.5
+export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
+export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1000000}
+export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1
+# UNDEFENDED: let deferred tool loading actually run.
+export ENABLE_TOOL_SEARCH=auto
+
+exec claude --model gpt-5.5 "$@"

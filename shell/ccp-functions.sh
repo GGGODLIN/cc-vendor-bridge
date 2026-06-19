@@ -242,40 +242,59 @@ ccp-bruce() {
     export ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.5
     export CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.5
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    # FORCE off (not ${VAR:-off}): deferred tool loading emits `tool_reference`
-    # content blocks that Bruce proxy rejects with 400 messages.X.content Invalid.
-    # Verified 2026-06-19: 36/36 hit subagent jsonl in devspace-pr-review-eval
-    # all show ToolSearch → tool_result(tool_reference) → 400. Trade-off: all
-    # tool schemas now load upfront, eating ~30-100K tokens of the 256K context.
-    export ENABLE_TOOL_SEARCH=off
-    # Match ccp-deepseek / ccp-mimo convention — vendor sessions disable client-side
-    # auto-compact. Context cap pinned at Bruce's empirically measured ceiling.
-    #
-    # Backend reality (bin/probe-bruce-context-cap.sh, cache-bypassed):
-    #   - GPT-5.5 official API ctx: 1,050,000 tokens
-    #   - 2026-06-19 morning probe : 263K input_tokens OK / ≥350K raw → HTTP 400
-    #     "conversation too large" (honest reject)
-    #   - 2026-06-19 evening reprobe: 380K raw → 267,344 input_tokens OK /
-    #     390K raw → ⚠ HTTP 200 + empty content + input_tokens=0 (SILENT DROP).
-    #     Boundary moved up ~4K tokens; failure mode regressed from honest 400
-    #     to silent 200-empty. CC client would mistake an empty completion for
-    #     a real successful turn — strictly worse than the old behavior.
-    #   - Setting client cap > ~256K reads wide in statusline but mid-turn
-    #     silently drops once payload crosses ~270K input_tokens.
+    # Deferred tool loading. Was FORCEd off pre-2026-06-19 because Bruce proxy
+    # rejected `tool_reference` content blocks with 400 messages.X.content Invalid
+    # (36/36 subagent kill rate in devspace-pr-review-eval workflow). Admin
+    # confirmed fix 2026-06-19; bin/probe-bruce-tool-reference.sh passes (200).
+    # Restored to default auto — recovers ~30-100K tokens of system-prompt budget.
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    # Match ccp-deepseek / ccp-mimo convention — disable client-side auto-compact.
+    # Backend ctx lifted to 1M 2026-06-19 (admin confirmed; user re-probed pass).
     export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-256000}
-    # Vendor-specific tool map nudge (C-1 harness — verified via CC binary strings 2026-06-19):
-    #   - --append-system-prompt CLI flag injects tool map into main session
-    #   - CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1 propagates the same to every Task-tool
-    #     subagent + nested subagents + workflow agents (gate documented in CC binary)
-    #   - main CC sessions don't set these → zero pollution
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1000000}
+    # C-1 harness: --append-system-prompt propagates to every Task-tool subagent +
+    # nested subagents + workflow agents (gate documented in CC binary, verified
+    # 2026-06-19). Tiny system prompt below to keep propagation cheap.
     export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1
-    # --model CLI flag has highest precedence (above ~/.claude/settings.json model
-    # and ANTHROPIC_MODEL env). Without this, settings.json "model":"claude-opus-4-7[1m]"
-    # would override our env force-pin and CC TUI would display the wrong model
-    # (API still routes to Bruce because BASE_URL is not in settings.json).
-    claude --model gpt-5.5 --append-system-prompt "Bruce backend tool map (server-side schema constraints, ~256K input_tokens cap; backend behaves like gpt-5o not real gpt-5.5). Tool availability when CC_VENDOR=bruce: WebSearch is REJECTED (server-side tool schema not accepted by proxy, fails with 400 tools.0.input_schema Invalid) — use mcp__chrome-devtools__new_page with https://www.google.com/search?q=<query> followed by mcp__chrome-devtools__take_snapshot to get SERP. mcp__claude-in-chrome__* is NOT registered (model/vendor gate) — use mcp__chrome-devtools__* instead. AVAILABLE: WebFetch, mcp__chrome-devtools__*, mcp__shopify-dev-mcp__*, Bash with gh api or curl. Apply this map proactively when dispatching to subagents or running research workflows — do not waste turns trying WebSearch or mcp__claude-in-chrome__*." "$@"
+    # --disallowed-tools WebSearch — HARD safety. The 2026-06-19 fix to issue 2
+    # (proxy now accepts web_search_20250305 schema) regressed into SILENT
+    # FABRICATION: proxy returns 200 + tool_result body with fake citations
+    # dressed in Anthropic's "REMINDER: You MUST include the sources above..."
+    # injection. Verified session 580f03bc (3/3 prompts), model dutifully quoted
+    # fabricated URLs / dates. Worse than the original 400 because the failure
+    # is invisible to client + user. Keep disabled until proxy implements a real
+    # search backend (e.g. Bocha, like DeepSeek's /anthropic does) OR returns
+    # honest is_error tool_result. See docs/caveats.md §13b.
+    # --model CLI flag has highest precedence (above settings.json + ANTHROPIC_MODEL env);
+    # without it settings.json "model":"claude-opus-4-7[1m]" overrides env force-pin
+    # and CC TUI displays the wrong model (API still routes to Bruce).
+    claude --model gpt-5.5 \
+      --disallowed-tools WebSearch \
+      --append-system-prompt "WebSearch is disabled on this vendor (Bruce proxy returns fabricated SERP results — verified 2026-06-19 session 580f03bc). For web search use mcp__chrome-devtools__new_page with https://www.google.com/search?q=<query> then mcp__chrome-devtools__take_snapshot." \
+      "$@"
   )
+}
+
+ccp-bruce-usage() {
+  if [[ -z "$BRUCE_API_KEY" ]]; then
+    echo "ccp-bruce-usage: BRUCE_API_KEY not set. See shell/secrets.example" >&2
+    return 1
+  fi
+
+  if ! command -v jq >/dev/null; then
+    echo "ccp-bruce-usage: jq not found" >&2
+    return 1
+  fi
+
+  local body
+  if ! body=$(curl -fsS -m 10 \
+    -H "Authorization: Bearer $BRUCE_API_KEY" \
+    "https://bruce-token-proxy-2kjfv3lttq-de.a.run.app/v1/usage/me"); then
+    echo "ccp-bruce-usage: usage API request failed" >&2
+    return 1
+  fi
+
+  jq . <<<"$body"
 }
 
 # ===== Codex side: codex CLI through Bruce (OpenAI Responses path) =====
