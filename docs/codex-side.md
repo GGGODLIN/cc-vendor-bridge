@@ -155,6 +155,24 @@ Anthropic side §13b 實測 WebSearch / ToolSearch tool_reference 100% reject（
 
 社群回報：IDE-embedded codex 不重讀 env vars，改 `BRUCE_API_KEY` 後必須完全關掉 IDE 才生效。Terminal 單跑沒這問題（每次 invoke 新 process 都讀 env）。
 
+### CX-10. Bruce 503 是「額度 throttle 偽裝服務當機」+ recall 比 native 差（2026-06-19 PR 2160 實測）
+
+**症狀**：`codex-bruce review` 跑到一半（或第一個 POST）收到 `503 Service Unavailable: OpenAI Responses 503: {"error":{"message":"Service temporarily unavailable","type":"api_error"}}`，Codex 內建 5/5 retry 全失敗，吐 `Review was interrupted. Please re-run /review and wait for it to complete.` exit code 0 但無 findings 產出。
+
+**Root cause（管理員確認）**：不是 OpenAI 後端真的 down，是 **Bruce 中轉站本地額度 throttle**。但回傳 envelope 是 upstream 透傳的 503 shape，user 端誤判成「服務暫時不可用」，加上 codex 5/5 retry 也救不了。額度補完後同樣命令一次過。
+
+**Workaround**：撞 503 → 不要無腦 retry，先確認額度。一次 review 大概燒 7K 行 output + 19 分鐘 wall-clock（gpt-5.5 經 Bruce 中轉、reasoning effort xhigh）。額度耗盡前的單一 review session 通常能撐完一個中型 PR（~7 檔 ~500 行 diff）。
+
+**未來中轉站維運建議**：把 quota throttle 改回明確的 `429 + retry-after`，Codex 內建 retry 對 429 有 backoff 邏輯能自動恢復；503 的 retry 行為是「立即重連」對額度問題無效。
+
+**Recall 比 native 差**：同 PR 2160、同 `gpt-5.5` model、同 `xhigh` effort，native `codex review`（直連 ChatGPT OAuth）抓到 2 個 findings（route slash bug + carrier_service.v2 FamilyMart 倒退），`codex-bruce review` 只抓到 1 個（route slash），漏了業務邏輯細節那條。Wall-clock 也慢 3×（Bruce 19m 26s vs native 6m 57s）。
+
+兩個假說（未驗、留給未來探查）：
+- (a) Bruce 後端的 gpt-5.5 是 mislabeled gpt-5o（caveat §13a 已實證 input cap ~256K 跟 gpt-5o 規格吻合），能力不如真 gpt-5.5
+- (b) Bruce session input cap 較低、中途 truncate 早讀的 context、後續分析變不完整
+
+**結論**：codex-bruce 適合做 OpenAI OAuth 撞牆時的應急 fallback、不適合當主力 review。重要 PR review 預設走 native；額度爆了再 fallback bruce，並預期可能漏細節（必要時 native 額度恢復後 re-review）。
+
 ## Verify steps
 
 ### 即時 sanity check
