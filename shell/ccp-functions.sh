@@ -27,6 +27,10 @@
 #   - ANTHROPIC_AUTH_TOKEN (sourced from secrets)
 #   - CC_VENDOR            (vendor marker for hook Defense 0)
 
+# Captured at source time so wrapper functions can locate sibling bin/ scripts.
+# zsh idiom: %x = currently-sourced file path; :A = absolute; :h = parent dir.
+_CC_VENDOR_BRIDGE_DIR="${${(%):-%x}:A:h:h}"
+
 # ===== DeepSeek V4-Pro =====
 # Source: https://api-docs.deepseek.com/zh-cn/quick_start/agent_integrations/claude_code
 ccp-deepseek() {
@@ -295,6 +299,21 @@ ccp-bruce-usage() {
   fi
 
   jq . <<<"$body"
+}
+
+# ===== Bruce pool health watcher =====
+# Polls /v1/pool/status healthPercent (no token cost) and fires macOS
+# notifications on cross-down of warn / alert / critical thresholds. The
+# earlier ccp-bruce-correlate experiment confirmed (2026-06-20 636-sample
+# / 2h9min run) healthPercent is a leading indicator — messages stayed
+# 100% 2xx while health swung 86.67% → 20%. Logic folded into watch;
+# correlate retired.
+ccp-bruce-watch() {
+  if [[ -z "$BRUCE_API_KEY" ]]; then
+    echo "ccp-bruce-watch: BRUCE_API_KEY not set. See shell/secrets.example" >&2
+    return 1
+  fi
+  "${_CC_VENDOR_BRIDGE_DIR}/bin/ccp-bruce-watch" "$@"
 }
 
 # ===== Codex side: codex CLI through Bruce (OpenAI Responses path) =====
