@@ -1,0 +1,12 @@
+{
+  "vendor": "glm",
+  "profile_id": "test01",
+  "data": {
+    "level": "lite",
+    "limits": [
+      { "type": "TIME_LIMIT", "unit": 5, "number": 1, "percentage": 13 },
+      { "type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 87 },
+      { "type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 30, "nextResetTime": 1782447574978 }
+    ]
+  }
+}
