@@ -125,8 +125,19 @@ ccp-deepseek() {
 # the function with "no matches found: glm-5.2[1m]". bash doesn't trip this (no NOMATCH
 # default). `setopt local_options no_nomatch` is a 防呆 net inside the subshell.
 #
-# 派工策略：Opus = glm-5.2[1m] 享 1M ctx；Sonnet/Haiku/Subagent = glm-4.7 省 quota
-# (GLM-4.7 = 1× 倍率永遠、GLM-5.2 peak 3× / off-peak 2× → promo 1× until 2026-09)
+# 派工策略：所有 alias 全 glm-5.2[1m] (2026-06-22 改)
+# 改前：Opus=glm-5.2[1m] / Sonnet/Haiku/Subagent=glm-4.7（省 quota）
+# 改因：subagent / sonnet alias 也享 1M context（5.2 有 1M、4.7 沒有）、跨 alias
+#       行為一致、未來不會踩到「opus 走 5.2 / subagent 走 4.7 → context 不對稱」
+# 倍率：promo 期 (~2026-09) 內 1× 同 4.7、過後變 2-3×（peak 3× / off-peak 2×）
+#
+# ⚠️ 2026-06-22 WebSearch tool 問題不是 model 問題 — z.ai 不支援 CC client-side
+#    WebSearch tool schema（4.7/5.2 都噴 400 [1210] Invalid API parameter）。
+#    z.ai server-side `web_search_20250305` 是工作的（curl probe 確認）、但 CC
+#    走的 client-side wrapper schema 不認得。deep-research-paced 等需 WebSearch
+#    的 workflow 在 ccp-glm 跑會死、要改走 anthropic 或自寫 Bash + urllib 路徑
+#
+# ⚠️ 2026-09 review：promo 結束時重評 5.2 全配對 2-3× 成本是否還划算
 ccp-glm() {
   if [[ -z "$ZAI_API_KEY" ]]; then
     echo "ccp-glm: ZAI_API_KEY not set. See shell/secrets.example" >&2
@@ -140,9 +151,9 @@ ccp-glm() {
     export ANTHROPIC_AUTH_TOKEN=$ZAI_API_KEY
     export ANTHROPIC_MODEL='glm-5.2[1m]'
     export ANTHROPIC_DEFAULT_OPUS_MODEL='glm-5.2[1m]'
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=glm-4.7
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.7
-    export CLAUDE_CODE_SUBAGENT_MODEL=glm-4.7
+    export ANTHROPIC_DEFAULT_SONNET_MODEL='glm-5.2[1m]'
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL='glm-5.2[1m]'
+    export CLAUDE_CODE_SUBAGENT_MODEL='glm-5.2[1m]'
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000
     export API_TIMEOUT_MS=3000000
     export ENABLE_TOOL_SEARCH=auto
@@ -299,6 +310,47 @@ ccp-bruce-usage() {
   fi
 
   jq . <<<"$body"
+}
+
+# ===== Bruce per-key quota (admin: consumed / remaining USD) =====
+# /v1/usage/quota returns {consumedUsd, remainingUsd}. Human summary by default;
+# `--json` dumps raw response.
+ccp-bruce-quota() {
+  if [[ -z "$BRUCE_API_KEY" ]]; then
+    echo "ccp-bruce-quota: BRUCE_API_KEY not set. See shell/secrets.example" >&2
+    return 1
+  fi
+
+  if ! command -v jq >/dev/null; then
+    echo "ccp-bruce-quota: jq not found" >&2
+    return 1
+  fi
+
+  local raw=0
+  if [[ "${1:-}" == "--json" ]]; then
+    raw=1
+  fi
+
+  local body
+  if ! body=$(curl -fsS -m 10 \
+    -H "Authorization: Bearer $BRUCE_API_KEY" \
+    "https://bruce-token-proxy-2kjfv3lttq-de.a.run.app/v1/usage/quota"); then
+    echo "ccp-bruce-quota: quota API request failed" >&2
+    return 1
+  fi
+
+  if [[ "$raw" == 1 ]]; then
+    jq . <<<"$body"
+    return
+  fi
+
+  jq -r '
+    .consumedUsd as $c
+    | .remainingUsd as $r
+    | ($c + $r) as $t
+    | (if $t > 0 then ($c / $t * 100) else 0 end) as $pct
+    | "consumed:   $\($c * 100 | round / 100)\nremaining:  $\($r * 100 | round / 100)\ntotal:      $\($t * 100 | round / 100)\nused:       \($pct * 10 | round / 10)%"
+  ' <<<"$body"
 }
 
 # ===== Bruce pool health watcher =====
