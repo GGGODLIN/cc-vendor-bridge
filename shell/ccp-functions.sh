@@ -157,7 +157,18 @@ ccp-glm() {
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000
     export API_TIMEOUT_MS=3000000
     export ENABLE_TOOL_SEARCH=auto
-    claude --model 'glm-5.2[1m]' "$@"
+    # C-1 harness: propagate --append-system-prompt to subagents + workflow agents.
+    export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1
+    # --disallowed-tools WebSearch — z.ai endpoint rejects CC client-side WebSearch
+    # tool schema with 400 [1210] Invalid API parameter (2026-06-22 verified for
+    # glm-4.7 / glm-5.2; see _index_cc_model_swap entry 2026-06-22). Disable upfront
+    # + nudge to client-side Exa avoids the silent workflow-die (deep-research-paced
+    # etc. 5/5 Search agents 400-killed) AND saves z.ai Coding Plan monthly quota
+    # (if endpoint later returns to the older web_search_prime substitution pattern).
+    claude --model 'glm-5.2[1m]' \
+      --disallowed-tools WebSearch \
+      --append-system-prompt "WebSearch is disabled on this vendor (z.ai endpoint rejects CC client-side WebSearch schema with 400 [1210] — verified 2026-06-22 for glm-4.7 / glm-5.2). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no z.ai Coding Plan quota cost). Pass --json flag for raw JSON if you need to parse fields." \
+      "$@"
   )
 }
 
@@ -285,7 +296,7 @@ ccp-bruce() {
     # and CC TUI displays the wrong model (API still routes to Bruce).
     claude --model gpt-5.5 \
       --disallowed-tools WebSearch \
-      --append-system-prompt "WebSearch is disabled on this vendor (Bruce proxy returns fabricated SERP results — verified 2026-06-19 session 580f03bc). For web search use mcp__chrome-devtools__new_page with https://www.google.com/search?q=<query> then mcp__chrome-devtools__take_snapshot." \
+      --append-system-prompt "WebSearch is disabled on this vendor (Bruce proxy returns fabricated SERP results — verified 2026-06-19 session 580f03bc). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no Bruce token cost). Pass --json flag for raw JSON if you need to parse fields." \
       "$@"
   )
 }
