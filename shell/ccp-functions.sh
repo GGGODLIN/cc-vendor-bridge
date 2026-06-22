@@ -167,7 +167,7 @@ ccp-glm() {
     # (if endpoint later returns to the older web_search_prime substitution pattern).
     claude --model 'glm-5.2[1m]' \
       --disallowed-tools WebSearch \
-      --append-system-prompt "WebSearch is disabled on this vendor (z.ai endpoint rejects CC client-side WebSearch schema with 400 [1210] — verified 2026-06-22 for glm-4.7 / glm-5.2). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no z.ai Coding Plan quota cost). Pass --json flag for raw JSON if you need to parse fields." \
+      --append-system-prompt "WebSearch is disabled on this vendor (z.ai endpoint rejects CC client-side WebSearch schema with 400 [1210] — verified 2026-06-22 for glm-4.7 / glm-5.2). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no z.ai Coding Plan quota cost). Pass --json flag for raw JSON if you need to parse fields. IMPORTANT: When dispatching Task subagents or workflow agents that may need web search, you MUST include this verbatim instruction in their prompt: 'For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\"' — subagents do not auto-inherit this nudge (session 2650cf5f verified: subagent fell back to DuckDuckGo/Bing/Google HTML scraping)." \
       "$@"
   )
 }
@@ -296,7 +296,7 @@ ccp-bruce() {
     # and CC TUI displays the wrong model (API still routes to Bruce).
     claude --model gpt-5.5 \
       --disallowed-tools WebSearch \
-      --append-system-prompt "WebSearch is disabled on this vendor (Bruce proxy returns fabricated SERP results — verified 2026-06-19 session 580f03bc). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no Bruce token cost). Pass --json flag for raw JSON if you need to parse fields." \
+      --append-system-prompt "WebSearch is disabled on this vendor (Bruce proxy returns fabricated SERP results — verified 2026-06-19 session 580f03bc). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no Bruce token cost). Pass --json flag for raw JSON if you need to parse fields. IMPORTANT: When dispatching Task subagents or workflow agents that may need web search, you MUST include this verbatim instruction in their prompt: 'For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\"' — subagents do not auto-inherit this nudge (session 2650cf5f verified: subagent fell back to DuckDuckGo/Bing/Google HTML scraping)." \
       "$@"
   )
 }
