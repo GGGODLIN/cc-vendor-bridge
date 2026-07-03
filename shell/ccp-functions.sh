@@ -165,7 +165,14 @@ ccp-glm() {
     # + nudge to client-side Exa avoids the silent workflow-die (deep-research-paced
     # etc. 5/5 Search agents 400-killed) AND saves z.ai Coding Plan monthly quota
     # (if endpoint later returns to the older web_search_prime substitution pattern).
+    # --fallback-model pinned to glm-5.2[1m] — on main-model API errors (e.g. z.ai
+    # 400 [1301] content filter / [1210] param reject) CC's built-in fallback ignores
+    # ANTHROPIC_MODEL env and retries with claude-opus-4-7, which z.ai silently maps
+    # to glm-4.7 (200K window): large sessions wedge on a misleading "context window
+    # limit" error, small sessions silently degrade (2026-07-04 proxy-capture verified,
+    # sessions bcaae410 / a2a18881).
     claude --model 'glm-5.2[1m]' \
+      --fallback-model 'glm-5.2[1m]' \
       --disallowed-tools WebSearch \
       --append-system-prompt "WebSearch is disabled on this vendor (z.ai endpoint rejects CC client-side WebSearch schema with 400 [1210] — verified 2026-06-22 for glm-4.7 / glm-5.2). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no z.ai Coding Plan quota cost). Pass --json flag for raw JSON if you need to parse fields. IMPORTANT: When dispatching Task subagents or workflow agents that may need web search, you MUST include this verbatim instruction in their prompt: 'For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\"' — subagents do not auto-inherit this nudge (session 2650cf5f verified: subagent fell back to DuckDuckGo/Bing/Google HTML scraping)." \
       "$@"
@@ -301,39 +308,33 @@ ccp-bruce() {
   )
 }
 
-ccp-bruce-usage() {
+# ===== Bruce one-shot status snapshot (quota + pool health + service stability) =====
+#合併三條 curl-系查詢：
+#   /v1/usage/quota   →  consumed / remaining USD                (per-key billing)
+#   /v1/pool/status   →  healthPercent + serviceStabilityPercent (admin endpoints)
+#
+# healthPercent (2026-06-20 calibrated leading indicator)
+#   pool 容量 — 15-account pool 還有多少 5h quota 沒被吃掉，6.67% step。
+#   < 20% = pool 接近耗盡、imminent 503 風險。
+#
+# serviceStabilityPercent (新增 2026-06-28，無 historic calibration)
+#   服務層可用性（推測為 success rate / 反向 error rate），連續百分比、100=全綠。
+#   推測門檻（待 trend 累積資料校準）：
+#     ≥ 80%: 正常
+#     50-80: 服務有波動，可能 upstream provider 部分異常
+#     < 50%: 服務嚴重不穩、建議 pause 大量工作 workflow
+#
+# Usage:
+#   ccp-bruce-status              # human-readable snapshot
+#   ccp-bruce-status --json       # merged raw JSON ({quota, pool})
+ccp-bruce-status() {
   if [[ -z "$BRUCE_API_KEY" ]]; then
-    echo "ccp-bruce-usage: BRUCE_API_KEY not set. See shell/secrets.example" >&2
+    echo "ccp-bruce-status: BRUCE_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
 
   if ! command -v jq >/dev/null; then
-    echo "ccp-bruce-usage: jq not found" >&2
-    return 1
-  fi
-
-  local body
-  if ! body=$(curl -fsS -m 10 \
-    -H "Authorization: Bearer $BRUCE_API_KEY" \
-    "https://bruce-token-proxy-2kjfv3lttq-de.a.run.app/v1/usage/me"); then
-    echo "ccp-bruce-usage: usage API request failed" >&2
-    return 1
-  fi
-
-  jq . <<<"$body"
-}
-
-# ===== Bruce per-key quota (admin: consumed / remaining USD) =====
-# /v1/usage/quota returns {consumedUsd, remainingUsd}. Human summary by default;
-# `--json` dumps raw response.
-ccp-bruce-quota() {
-  if [[ -z "$BRUCE_API_KEY" ]]; then
-    echo "ccp-bruce-quota: BRUCE_API_KEY not set. See shell/secrets.example" >&2
-    return 1
-  fi
-
-  if ! command -v jq >/dev/null; then
-    echo "ccp-bruce-quota: jq not found" >&2
+    echo "ccp-bruce-status: jq not found" >&2
     return 1
   fi
 
@@ -342,26 +343,41 @@ ccp-bruce-quota() {
     raw=1
   fi
 
-  local body
-  if ! body=$(curl -fsS -m 10 \
+  local base="https://bruce-token-proxy-2kjfv3lttq-de.a.run.app"
+  local quota pool
+  if ! quota=$(curl -fsS -m 10 \
     -H "Authorization: Bearer $BRUCE_API_KEY" \
-    "https://bruce-token-proxy-2kjfv3lttq-de.a.run.app/v1/usage/quota"); then
-    echo "ccp-bruce-quota: quota API request failed" >&2
+    "$base/v1/usage/quota"); then
+    echo "ccp-bruce-status: /v1/usage/quota request failed" >&2
+    return 1
+  fi
+  if ! pool=$(curl -fsS -m 10 \
+    -H "Authorization: Bearer $BRUCE_API_KEY" \
+    "$base/v1/pool/status"); then
+    echo "ccp-bruce-status: /v1/pool/status request failed" >&2
     return 1
   fi
 
   if [[ "$raw" == 1 ]]; then
-    jq . <<<"$body"
+    jq -n --argjson quota "$quota" --argjson pool "$pool" '{quota: $quota, pool: $pool}'
     return
   fi
 
-  jq -r '
-    .consumedUsd as $c
-    | .remainingUsd as $r
+  jq -nr \
+    --argjson quota "$quota" \
+    --argjson pool "$pool" \
+    '
+    ($quota.consumedUsd) as $c
+    | ($quota.remainingUsd) as $r
     | ($c + $r) as $t
     | (if $t > 0 then ($c / $t * 100) else 0 end) as $pct
-    | "consumed:   $\($c * 100 | round / 100)\nremaining:  $\($r * 100 | round / 100)\ntotal:      $\($t * 100 | round / 100)\nused:       \($pct * 10 | round / 10)%"
-  ' <<<"$body"
+    | ($pool.healthPercent // null) as $h
+    | ($pool.serviceStabilityPercent // null) as $s
+    | "[ccp-bruce-status]\n"
+      + "quota   consumed=$\($c * 100 | round / 100) / total=$\($t * 100 | round / 100)   used=\($pct * 10 | round / 10)%   remaining=$\($r * 100 | round / 100)\n"
+      + "pool    healthPercent=\($h // "?")%   (15-acct pool capacity, 6.67% step, leading indicator for 503)\n"
+      + "service serviceStabilityPercent=\($s // "?")%   (service-layer reliability, 100=all-green; thresholds推測 ≥80 normal / 50-80 wobble / <50 unstable)"
+    '
 }
 
 # ===== Bruce pool health watcher =====
@@ -419,6 +435,66 @@ codex-bruce() {
     return 1
   fi
   codex -c model_provider=bruce "$@"
+}
+
+# ===== Codex side: codex CLI through z.ai GLM (via local LiteLLM bridge) =====
+# Setup 2026-06-24. End-to-end smoke verified: codex exec → LiteLLM (port 4000)
+# → z.ai glm-5.2 → response + 11.8K tokens accounted.
+#
+# Why a proxy: z.ai 不暴露 /v1/responses (probed 2026-06-24: 4 條 base 全 404),
+# codex 0.139+ 只接 wire_api = "responses"。LiteLLM bridge 把 client 的
+# /v1/responses 翻譯成 /v1/chat/completions 再 forward 到 z.ai Coding Plan。
+# 配套 yaml: config/litellm-zai.yaml (use_chat_completions_api: true)。
+#
+# Prerequisites:
+#   1. ~/.codex/config.toml has [model_providers.zai] block pointing to
+#      http://localhost:4000/v1 (added 2026-06-24)
+#   2. LITELLM_MASTER_KEY env exported (matches general_settings.master_key
+#      in yaml — see ~/.zsh_secrets)
+#   3. LiteLLM proxy running:  bin/codex-glm-proxy-start.sh
+#
+# The 9 --disable flags are mandatory: codex 0.142 ships 20+ built-in tools
+# including 5 namespace-type (multi_agent, apps), 1 web_search, 1 image_generation.
+# z.ai chat completions only accepts tools[].type = "function" and rejects
+# anything else with 400 "tools[N].type:type is illegal". Disabling these
+# features strips the non-function tools at request build time.
+#
+# Caveats:
+#   - Plugin (/codex:review etc.) bypasses this wrapper (plugin spawns codex
+#     with hardcoded ["app-server"] args, no -c injection surface). Use codex
+#     review subcommand instead, or flip default provider in config.toml.
+#   - Two non-fatal stderr warnings ("failed to refresh available models",
+#     "OutputTextDelta without active item") — don't affect functionality.
+#   - z.ai 429 self-throttle is common; codex internal retry doesn't backoff
+#     well. For important tasks probe z.ai health first.
+#   - Tools stripped: multi-agent, plugins, browser_use, computer_use,
+#     image_generation, goals, tool_suggest, web_search. Agentic capability
+#     half-crippled vs native — use for fallback, not as daily driver.
+codex-glm() {
+  if [[ -z "$ZAI_API_KEY" ]]; then
+    echo "codex-glm: ZAI_API_KEY not set. See shell/secrets.example" >&2
+    return 1
+  fi
+  if [[ -z "$LITELLM_MASTER_KEY" ]]; then
+    echo "codex-glm: LITELLM_MASTER_KEY not set. See shell/secrets.example" >&2
+    return 1
+  fi
+  if ! /usr/sbin/lsof -nP -iTCP:4000 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "codex-glm: LiteLLM proxy not running on :4000." >&2
+    echo "  Start it:  ${_CC_VENDOR_BRIDGE_DIR}/bin/codex-glm-proxy-start.sh" >&2
+    return 1
+  fi
+  codex -c model_provider=zai -c model=glm-5.2 \
+    --disable multi_agent \
+    --disable apps \
+    --disable image_generation \
+    --disable browser_use \
+    --disable browser_use_external \
+    --disable computer_use \
+    --disable plugins \
+    --disable goals \
+    --disable tool_suggest \
+    "$@"
 }
 
 # ===== Rapid-MLX local (auto-detect model from running serve) =====
@@ -573,6 +649,11 @@ Available cc-vendor-bridge functions:
 
   ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
                       (workaround caveat 11: 跨 vendor resume 會炸 thinking signature)
+
+  ccp-bruce-status  → Bruce 三件事 snapshot (quota + pool health + service stability)
+                      取代舊 ccp-bruce-quota / ccp-bruce-usage 的日常使用 (--json 印合併原始)
+  ccp-bruce-watch   → Bruce 長期守護 watcher (healthPercent + serviceStabilityPercent 雙 metric
+                      threshold 觸發，jsonl log 落檔，macOS notification)
 
 Disabled (API key not configured):
   ccp-kimi / ccp-kimi-cn / ccp-glm-cn / ccp-qwen / ccp-qwen-coding
