@@ -633,6 +633,56 @@ except Exception:
 #   )
 # }
 
+# ===== CLIProxyAPI self-hosted relay (subscription-to-API hub) =====
+# Backend: ~/Desktop/projects/cliproxyapi-setup (management handbook in its CLAUDE.md).
+# Serves Codex OAuth (gpt-5.5/5.4), Antigravity OAuth (claude-opus-4-6-thinking /
+# claude-sonnet-4-6 / gemini-pro-agent=3.1-Pro-High / nano-banana-2 image), and the
+# free pool (ds-flash = Zen-priority + NVIDIA-fallback cross-provider alias).
+# Per-call override:
+#   ANTHROPIC_MODEL=claude-sonnet-4-6 ccp-relay        # Antigravity Claude
+#   ANTHROPIC_MODEL='gpt-5.5(high)' ccp-relay          # effort suffix works
+#   ANTHROPIC_MODEL=ds-flash ccp-relay -p "cheap task" # free pool
+ccp-relay() {
+  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+    echo "ccp-relay: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
+    return 1
+  fi
+  # Health check: relay is a launchd KeepAlive service on 8317; kickstart if down.
+  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+    echo "[ccp-relay] relay not listening, kickstarting launchd service..." >&2
+    launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
+    local i=0
+    while (( i < 50 )); do
+      /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null && break
+      sleep 0.1; ((i++))
+    done
+    if (( i >= 50 )); then
+      print -P "%F{red}[ccp-relay] relay did not become ready in 5s — check ~/.cli-proxy-api/logs/%f" >&2
+      return 1
+    fi
+  fi
+  (
+    source ~/.cli-proxy-api/keys.env
+    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
+    export CC_VENDOR=relay
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-5.5}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.5}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.5}
+    # HAIKU slot → free pool: background/summarization traffic costs nothing.
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-ds-flash}
+    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-gpt-5.5}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    # --disallowed-tools WebSearch — untested how CLIProxyAPI translates the
+    # web_search_20250305 server-tool schema to Codex/Antigravity upstreams
+    # (glm rejects with 400, bruce silently fabricates — see docs/caveats.md §13b).
+    # Keep disabled until probed; remove after a verified pass.
+    claude --disallowed-tools WebSearch "$@"
+  )
+}
+
 # ===== Helper: list available functions =====
 ccp-list() {
   cat <<EOF
@@ -646,6 +696,9 @@ Available cc-vendor-bridge functions:
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
+  ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
+                      HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
+                      Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
 
   ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
                       (workaround caveat 11: 跨 vendor resume 會炸 thinking signature)
