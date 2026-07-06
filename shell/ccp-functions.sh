@@ -367,14 +367,15 @@ ccp-bruce-status() {
     --argjson quota "$quota" \
     --argjson pool "$pool" \
     '
-    ($quota.consumedUsd) as $c
+    ($quota.consumedUsd // 0) as $c
     | ($quota.remainingUsd) as $r
-    | ($c + $r) as $t
-    | (if $t > 0 then ($c / $t * 100) else 0 end) as $pct
     | ($pool.healthPercent // null) as $h
     | ($pool.serviceStabilityPercent // null) as $s
+    | (if $r == null then "unlimited" else "$\($r * 100 | round / 100)" end) as $rStr
+    | (if $r == null then "unlimited" else "$\(($c + $r) * 100 | round / 100)" end) as $tStr
+    | (if $r == null or ($c + $r) <= 0 then "n/a" else "\($c / ($c + $r) * 1000 | round / 10)%" end) as $pctStr
     | "[ccp-bruce-status]\n"
-      + "quota   consumed=$\($c * 100 | round / 100) / total=$\($t * 100 | round / 100)   used=\($pct * 10 | round / 10)%   remaining=$\($r * 100 | round / 100)\n"
+      + "quota   consumed=$\($c * 100 | round / 100) / total=\($tStr)   used=\($pctStr)   remaining=\($rStr)\n"
       + "pool    healthPercent=\($h // "?")%   (15-acct pool capacity, 6.67% step, leading indicator for 503)\n"
       + "service serviceStabilityPercent=\($s // "?")%   (service-layer reliability, 100=all-green; thresholds推測 ≥80 normal / 50-80 wobble / <50 unstable)"
     '
