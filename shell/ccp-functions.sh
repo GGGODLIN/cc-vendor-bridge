@@ -734,9 +734,13 @@ ccp-gpt() {
     # Tibo's alias sets false outright; GPT models' deferred-tool handling unverified.
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-false}
     # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
+    # Skill(claude-api): the bundled skill injects ~800KB (~200k tokens) when triggered
+    # (and it triggers on ANY Claude/LLM mention) — with this env's ~57k baseline that
+    # blows the 272k window with "Prompt is too long" (session c83482eb, 2026-07-14).
+    # Fine under fable[1m]; fatal on 272k models.
     # --model flag beats settings.json "model" (user pins claude-fable-5[1m] there,
     # which otherwise silently overrides ANTHROPIC_MODEL and mis-routes on the relay).
-    claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    claude --model "$ANTHROPIC_MODEL" --disallowed-tools 'WebSearch' 'Skill(claude-api)' "$@"
   )
 }
 
