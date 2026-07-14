@@ -731,6 +731,10 @@ ccp-gpt() {
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-272000}
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-240000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    # Single-shot injection caps for the 272k window: oversized MCP output spills
+    # to a temp file, oversized bash output truncates with a [KB removed] marker.
+    export MAX_MCP_OUTPUT_TOKENS=${MAX_MCP_OUTPUT_TOKENS:-25000}
+    export BASH_MAX_OUTPUT_LENGTH=${BASH_MAX_OUTPUT_LENGTH:-30000}
     # Tibo's alias sets false outright; GPT models' deferred-tool handling unverified.
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-false}
     # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
