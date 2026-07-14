@@ -721,6 +721,7 @@ ccp-gpt() {
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-5.6-sol}
+    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-5.6-sol}
     export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-sol}
     export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-terra}
     export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna}
@@ -733,7 +734,9 @@ ccp-gpt() {
     # Tibo's alias sets false outright; GPT models' deferred-tool handling unverified.
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-false}
     # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
-    claude --disallowed-tools WebSearch "$@"
+    # --model flag beats settings.json "model" (user pins claude-fable-5[1m] there,
+    # which otherwise silently overrides ANTHROPIC_MODEL and mis-routes on the relay).
+    claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
   )
 }
 
