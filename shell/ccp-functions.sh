@@ -723,6 +723,9 @@ ccp-gpt() {
     export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-sol}
     export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-terra}
     export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna}
+    export ANTHROPIC_CUSTOM_MODEL_OPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION:-gpt-5.6-sol-fast}
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-GPT-5.6\ Sol\ Fast}
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Priority\ tier\ for\ the\ main\ agent}
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-272000}
@@ -776,6 +779,7 @@ Available cc-vendor-bridge functions:
                       HAIKU→luna / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 272k context, tool search off)
   ccp-gpt-fast      → Same routing and context as ccp-gpt; priority service tier for all GPT-5.6 requests
+  /model picker      → Choose GPT-5.6 Sol Fast and press s for this session only; routed subagents stay Standard
 
   ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
                       (workaround caveat 11: 跨 vendor resume 會炸 thinking signature)

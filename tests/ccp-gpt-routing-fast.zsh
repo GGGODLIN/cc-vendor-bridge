@@ -34,10 +34,45 @@ assert_not_contains() {
   fi
 }
 
+assert_contains() {
+  local label="$1"
+  local haystack="$2"
+  local needle="$3"
+  if [[ "$haystack" == *"$needle"* ]]; then
+    print -r -- "ok - $label"
+  else
+    print -ru2 -- "not ok - $label"
+    print -ru2 -- "missing: ${(qqq)needle}"
+    (( failures++ ))
+  fi
+}
+
 assert_not_contains \
   "ccp-gpt does not flatten subagent routing" \
   "${functions[ccp-gpt]}" \
   "CLAUDE_CODE_SUBAGENT_MODEL="
+
+assert_contains \
+  "ccp-gpt exposes the Fast main-model option" \
+  "${functions[ccp-gpt]}" \
+  "ANTHROPIC_CUSTOM_MODEL_OPTION="
+
+assert_contains \
+  "ccp-gpt labels the Fast main-model option" \
+  "${functions[ccp-gpt]}" \
+  "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="
+
+ccp_list_output="$(ccp-list)"
+
+assert_contains \
+  "ccp-list explains the session-only model key" \
+  "$ccp_list_output" \
+  "press s"
+
+assert_not_contains \
+  "ccp-list does not recommend the persistent direct model command" \
+  "$ccp_list_output" \
+  "/model gpt-5.6-sol-fast"
 
 if (( ${+functions[ccp-gpt-fast]} )); then
   ccp-gpt() {
