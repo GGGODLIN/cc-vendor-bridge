@@ -688,14 +688,12 @@ ccp-relay() {
 # Recipe from OpenAI Codex lead Tibo Sottiaux (x.com/thsottiaux/status/2076119366647894371,
 # 2026-07-12) plus community fixes from the same thread. Tier mapping per OpenAI's
 # official positioning (Sol=flagship, Terra=balanced default, Luna=fast/cheap):
-#   OPUS→gpt-5.6-sol  SONNET→gpt-5.6-terra  HAIKU→gpt-5.6-luna  subagent→terra
-# Subagent deliberately NOT sol: multiple thread reports of Sol spawning 100-300+
-# subagents and burning a weekly quota in hours when subagents also run sol.
+#   OPUS→gpt-5.6-sol  SONNET→gpt-5.6-terra  HAIKU→gpt-5.6-luna
 # Context pinned to GPT-5.6's 272k cap (CC otherwise assumes 200k/1M); one thread
 # report says 272k broke auto-compact — watch for it, both vars are overridable.
 # Per-call override:
 #   ANTHROPIC_MODEL='gpt-5.6-sol(high)' ccp-gpt        # effort suffix works
-#   CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol ccp-gpt     # quota-hungry, see above
+#   CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol ccp-gpt     # explicitly override routing
 ccp-gpt() {
   if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
     echo "ccp-gpt: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
@@ -725,7 +723,6 @@ ccp-gpt() {
     export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-sol}
     export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-terra}
     export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna}
-    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-gpt-5.6-terra}
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-272000}
@@ -748,6 +745,17 @@ ccp-gpt() {
   )
 }
 
+ccp-gpt-fast() {
+  (
+    if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
+      export ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS}"$'\n'"X-CCP-Fast: 1"
+    else
+      export ANTHROPIC_CUSTOM_HEADERS="X-CCP-Fast: 1"
+    fi
+    ccp-gpt "$@"
+  )
+}
+
 # ===== Helper: list available functions =====
 ccp-list() {
   cat <<EOF
@@ -765,8 +773,9 @@ Available cc-vendor-bridge functions:
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
   ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (OPUS→sol / SONNET→terra /
-                      HAIKU→luna / subagent→terra), Tibo-recipe env vars (effort on,
+                      HAIKU→luna / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 272k context, tool search off)
+  ccp-gpt-fast      → Same routing and context as ccp-gpt; priority service tier for all GPT-5.6 requests
 
   ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
                       (workaround caveat 11: 跨 vendor resume 會炸 thinking signature)
