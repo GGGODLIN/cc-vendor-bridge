@@ -715,7 +715,7 @@ ccp-gpt-whoami() {
   local rows
   rows=$(printf '%s' "$mgmt_json" | jq -r '
     [.files[] | select(.provider == "codex")]
-    | sort_by(-(.priority // 0))
+    | sort_by([-(.priority // 0), .name])
     | .[]
     | (.recent_requests // [])[-6:] as $win
     | [ .email,
@@ -725,7 +725,8 @@ ccp-gpt-whoami() {
         (($win | map(.success) | add // 0) | tostring),
         (($win | map(.failed)  | add // 0) | tostring),
         ((.success // 0) | tostring),
-        ((.failed  // 0) | tostring)
+        ((.failed  // 0) | tostring),
+        ((.modtime // "") | .[0:16])
       ] | @tsv') 2>/dev/null
 
   if [[ -z "$rows" ]]; then
@@ -733,20 +734,18 @@ ccp-gpt-whoami() {
     return 1
   fi
 
-  local -a broken=() idle=()
-  local serving="" serving_note="" serving_rs=0
+  local -a broken=() idle=() ok_list=()
+  local serving="" serving_note="" serving_rs=-1 serving_email=""
   local fallback="" fallback_email="" fallback_note="" any_usable=""
-  local email plan prio disabled rs rf cs cf health
+  local email plan prio disabled rs rf cs cf modtime health
 
-  while IFS=$'\t' read -r email plan prio disabled rs rf cs cf; do
+  while IFS=$'\t' read -r email plan prio disabled rs rf cs cf modtime; do
     if [[ "$disabled" == "true" ]]; then
       health=disabled
     elif (( rf > 0 && rf >= rs )); then
       health=down
     elif (( rs > 0 )); then
       health=ok
-    elif (( cf > 0 && cf >= cs )); then
-      health=down
     else
       health=idle
     fi
@@ -754,34 +753,45 @@ ccp-gpt-whoami() {
     case "$health" in
       ok)
         any_usable=1
-        if (( rs > serving_rs )); then
-          serving_rs=$rs
-          serving="${email} (${plan})"
-          serving_note="最近一小時 ${rs} 成功 / ${rf} 失敗"
-        fi
+        ok_list+=("${rs}|${email}|${email} (${plan}, priority ${prio}) — 最近一小時 ${rs} 成功 / ${rf} 失敗")
         ;;
       idle)
         any_usable=1
-        idle+=("${email}|${email} (${plan}, priority ${prio}) — 最近一小時無流量；累計 ${cs} 成功 / ${cf} 失敗")
+        idle+=("${email}|${email} (${plan}, priority ${prio}) — 無近期流量、健康未知；憑證更新於 ${modtime}")
         if [[ -z "$fallback" ]]; then
           fallback="${email} (${plan})"
           fallback_email="$email"
-          fallback_note="無近期流量、未經驗證（依 priority ${prio} 推測）"
+          fallback_note="無近期流量、健康未知（依 priority ${prio} + 檔名排序推測）"
         fi
         ;;
       down|disabled)
-        broken+=("${email} (${plan}, priority ${prio}) — 最近 ${rf} 失敗 / ${rs} 成功；累計 ${cs} 成功 / ${cf} 失敗")
+        broken+=("${email} (${plan}, priority ${prio}) — 最近 ${rf} 失敗 / ${rs} 成功；憑證更新於 ${modtime}")
         ;;
     esac
   done <<< "$rows"
 
+  local entry rec
+  for entry in "${ok_list[@]}"; do
+    rec="${entry%%|*}"
+    if (( rec > serving_rs )); then
+      serving_rs=$rec
+      serving_email="${${entry#*|}%%|*}"
+      serving="${entry##*|}"
+    fi
+  done
+
   if [[ -n "$serving" ]]; then
-    print -P "%F{green}[ccp-gpt] 服務中：${serving}%f  — ${serving_note}" >&2
+    print -P "%F{green}[ccp-gpt] 服務中：${serving}%f" >&2
   elif [[ -n "$fallback" ]]; then
     print -P "%F{yellow}[ccp-gpt] 預計使用：${fallback}%f  — ${fallback_note}" >&2
   fi
 
-  local entry shown_fallback=""
+  for entry in "${ok_list[@]}"; do
+    [[ "${${entry#*|}%%|*}" == "$serving_email" ]] && continue
+    print -P "[ccp-gpt] 備援健康：${entry##*|}" >&2
+  done
+
+  local shown_fallback=""
   [[ -z "$serving" && -n "$fallback" ]] && shown_fallback="$fallback_email"
   for entry in "${idle[@]}"; do
     [[ "${entry%%|*}" == "$shown_fallback" ]] && continue
@@ -796,6 +806,13 @@ ccp-gpt-whoami() {
     print -P "%F{yellow}          重新登入：~/.cli-proxy-api/bin/cli-proxy-api --config ~/.cli-proxy-api/config.yaml --codex-login%f" >&2
     print -P "%F{yellow}          細節排查：ccp-gpt-whoami / tail -f ~/.cli-proxy-api/logs/main.log%f" >&2
   fi
+
+  local f
+  for f in ~/.cli-proxy-api/codex-*.json(N); do
+    jq -e 'has("priority")' "$f" >/dev/null 2>&1 && continue
+    print -P "%F{yellow}[ccp-gpt] ${f:t} 沒有 priority 欄位（--codex-login 重登會清掉它，視為 0）%f" >&2
+    print -P "%F{yellow}          要它當首選：把 \"priority\": 10 加回該檔，relay 會自動熱載%f" >&2
+  done
 
   if [[ -z "$any_usable" ]]; then
     print -P "%F{red}[ccp-gpt] 所有 codex 帳號都不可用，這次會直接失敗%f" >&2
