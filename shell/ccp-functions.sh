@@ -689,11 +689,115 @@ ccp-relay() {
 # 2026-07-12) plus community fixes from the same thread. Tier mapping per OpenAI's
 # official positioning (Sol=flagship, Terra=balanced default, Luna=fast/cheap):
 #   OPUS→gpt-5.6-sol  SONNET→gpt-5.6-terra  HAIKU→gpt-5.6-luna
-# Context pinned to GPT-5.6's 272k cap (CC otherwise assumes 200k/1M); one thread
-# report says 272k broke auto-compact — watch for it, both vars are overridable.
+# Context pinned to 372k = measured Codex OAuth backend cap (2026-07-15 relay probe:
+# 364k accepted / ~400k rejected; model spec is 1.05M via paid API only, and 272k in
+# Tibo's recipe is the long-context pricing threshold, not a limit). Both overridable.
 # Per-call override:
 #   ANTHROPIC_MODEL='gpt-5.6-sol(high)' ccp-gpt        # effort suffix works
 #   CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol ccp-gpt     # explicitly override routing
+
+# Which Codex account will actually serve this session. The relay silently falls
+# back to the next auth when the preferred one dies (2026-07-25: personal Pro token
+# was invalidated server-side and 8 days of traffic went to the work team account
+# unnoticed) — so surface it at launch instead of after the fact.
+ccp-gpt-whoami() {
+  local mgmt_json
+  mgmt_json=$(
+    source ~/.cli-proxy-api/keys.env 2>/dev/null
+    curl -s --max-time 5 -H "Authorization: Bearer ${CLIPROXY_MGMT_KEY}" \
+      "${CLIPROXY_BASE_URL:-http://127.0.0.1:8317}/v0/management/auth-files"
+  )
+  if [[ -z "$mgmt_json" ]]; then
+    print -P "%F{yellow}[ccp-gpt] 無法查詢帳號狀態（管理 API 沒回應）%f" >&2
+    return 1
+  fi
+
+  local rows
+  rows=$(printf '%s' "$mgmt_json" | jq -r '
+    [.files[] | select(.provider == "codex")]
+    | sort_by(-(.priority // 0))
+    | .[]
+    | (.recent_requests // [])[-6:] as $win
+    | [ .email,
+        (.id_token.plan_type // "?"),
+        ((.priority // 0) | tostring),
+        ((.disabled // false) | tostring),
+        (($win | map(.success) | add // 0) | tostring),
+        (($win | map(.failed)  | add // 0) | tostring),
+        ((.success // 0) | tostring),
+        ((.failed  // 0) | tostring)
+      ] | @tsv') 2>/dev/null
+
+  if [[ -z "$rows" ]]; then
+    print -P "%F{yellow}[ccp-gpt] 管理 API 沒回報任何 codex 帳號%f" >&2
+    return 1
+  fi
+
+  local -a broken=()
+  local serving="" serving_note="" any_usable=""
+  local email plan prio disabled rs rf cs cf health
+
+  while IFS=$'\t' read -r email plan prio disabled rs rf cs cf; do
+    if [[ "$disabled" == "true" ]]; then
+      health=disabled
+    elif (( rf > 0 && rf >= rs )); then
+      health=down
+    elif (( rs > 0 )); then
+      health=ok
+    elif (( cf > 0 && cf >= cs )); then
+      health=down
+    elif (( cs > 0 )); then
+      health=idle
+    else
+      health=unknown
+    fi
+
+    case "$health" in
+      ok)
+        any_usable=1
+        if [[ -z "$serving" ]]; then
+          serving="${email} (${plan})"
+          serving_note="最近一小時 ${rs} 成功 / ${rf} 失敗"
+        fi
+        ;;
+      idle|unknown)
+        any_usable=1
+        if [[ -z "$serving" ]]; then
+          serving="${email} (${plan})"
+          if [[ "$health" == idle ]]; then
+            serving_note="最近一小時無流量；累計 ${cs} 成功 / ${cf} 失敗"
+          else
+            serving_note="無任何流量紀錄，未經驗證（依 priority ${prio} 推測）"
+          fi
+        fi
+        ;;
+      down|disabled)
+        broken+=("${email} (${plan}, priority ${prio}) — 最近 ${rf} 失敗 / ${rs} 成功；累計 ${cs} 成功 / ${cf} 失敗")
+        ;;
+    esac
+  done <<< "$rows"
+
+  if [[ -n "$serving" ]]; then
+    print -P "%F{green}[ccp-gpt] 服務中：${serving}%f  — ${serving_note}" >&2
+  fi
+
+  if (( ${#broken[@]} > 0 )); then
+    local entry
+    for entry in "${broken[@]}"; do
+      print -P "%F{red}[ccp-gpt] ⚠️  ${entry}%f" >&2
+    done
+    print -P "%F{yellow}          priority 高的帳號壞掉時 relay 仍每次先試它、失敗才退回上面那個%f" >&2
+    print -P "%F{yellow}          重新登入：~/.cli-proxy-api/bin/cli-proxy-api --config ~/.cli-proxy-api/config.yaml --codex-login%f" >&2
+    print -P "%F{yellow}          細節排查：ccp-gpt-whoami / tail -f ~/.cli-proxy-api/logs/main.log%f" >&2
+  fi
+
+  if [[ -z "$any_usable" ]]; then
+    print -P "%F{red}[ccp-gpt] 所有 codex 帳號都不可用，這次會直接失敗%f" >&2
+    return 1
+  fi
+  return 0
+}
+
 ccp-gpt() {
   if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
     echo "ccp-gpt: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
@@ -712,6 +816,7 @@ ccp-gpt() {
       return 1
     fi
   fi
+  ccp-gpt-whoami
   (
     source ~/.cli-proxy-api/keys.env
     unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
@@ -728,10 +833,12 @@ ccp-gpt() {
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Priority\ tier\ for\ the\ main\ agent}
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-272000}
-    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-240000}
+    # Codex OAuth backend window measured 2026-07-15: 364k accepted / ~400k rejected,
+    # consistent with Codex metadata 372k. Model itself is 1.05M via paid API only.
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-372000}
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-330000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    # Single-shot injection caps for the 272k window: oversized MCP output spills
+    # Single-shot injection caps for the 372k window: oversized MCP output spills
     # to a temp file, oversized bash output truncates with a [KB removed] marker.
     export MAX_MCP_OUTPUT_TOKENS=${MAX_MCP_OUTPUT_TOKENS:-25000}
     export BASH_MAX_OUTPUT_LENGTH=${BASH_MAX_OUTPUT_LENGTH:-30000}
@@ -740,8 +847,8 @@ ccp-gpt() {
     # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
     # Skill(claude-api): the bundled skill injects ~800KB (~200k tokens) when triggered
     # (and it triggers on ANY Claude/LLM mention) — with this env's ~57k baseline that
-    # blows the 272k window with "Prompt is too long" (session c83482eb, 2026-07-14).
-    # Fine under fable[1m]; fatal on 272k models.
+    # blew the then-272k window with "Prompt is too long" (session c83482eb, 2026-07-14);
+    # at 372k it still eats >half the window. Fine under fable[1m]; fatal on ~372k models.
     # --model flag beats settings.json "model" (user pins claude-fable-5[1m] there,
     # which otherwise silently overrides ANTHROPIC_MODEL and mis-routes on the relay).
     claude --model "$ANTHROPIC_MODEL" --disallowed-tools 'WebSearch' 'Skill(claude-api)' "$@"
@@ -777,8 +884,10 @@ Available cc-vendor-bridge functions:
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
   ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (OPUS→sol / SONNET→terra /
                       HAIKU→luna / subagent routing preserved), Tibo-recipe env vars (effort on,
-                      concurrency 3, 272k context, tool search off)
+                      concurrency 3, 372k context, tool search off)
   ccp-gpt-fast      → Same routing and context as ccp-gpt; priority service tier for all GPT-5.6 requests
+  ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
+                      (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
   /model picker      → Choose GPT-5.6 Sol Fast and press s for this session only; routed subagents stay Standard
 
   ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
