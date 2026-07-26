@@ -811,7 +811,7 @@ ccp-gpt-whoami() {
   for f in ~/.cli-proxy-api/codex-*.json(N); do
     jq -e 'has("priority")' "$f" >/dev/null 2>&1 && continue
     print -P "%F{yellow}[ccp-gpt] ${f:t} 沒有 priority 欄位（--codex-login 重登會清掉它，視為 0）%f" >&2
-    print -P "%F{yellow}          要它當首選：把 \"priority\": 10 加回該檔，relay 會自動熱載%f" >&2
+    print -P "%F{yellow}          下次重登請用 ccp-gpt-relogin（會自動補回）%f" >&2
   done
 
   if [[ -z "$any_usable" ]]; then
@@ -819,6 +819,64 @@ ccp-gpt-whoami() {
     return 1
   fi
   return 0
+}
+
+# `--codex-login` builds a fresh auth object and persists only its in-memory
+# metadata (sdk/auth/filestore.go:103), so the file's `priority` key is dropped —
+# silently demoting the very account the re-login was meant to restore. There is
+# no config-level priority for OAuth auths (only for API-key providers), so the
+# value has to be put back into the file. Keyed by email, not filename: filenames
+# may carry a hash prefix that changes between logins.
+ccp-relay-priority-snapshot() {
+  local f
+  for f in ${CCP_RELAY_AUTH_DIR:-$HOME/.cli-proxy-api}/codex-*.json(N); do
+    jq -r 'select(has("priority") and has("email")) | "\(.email)\t\(.priority)"' "$f" 2>/dev/null
+  done
+}
+
+ccp-relay-priority-apply() {
+  local email prio f tmp applied=0
+  while IFS=$'\t' read -r email prio; do
+    [[ -z "$email" || -z "$prio" ]] && continue
+    for f in ${CCP_RELAY_AUTH_DIR:-$HOME/.cli-proxy-api}/codex-*.json(N); do
+      jq -e --arg e "$email" '.email == $e' "$f" >/dev/null 2>&1 || continue
+      jq -e --argjson p "$prio" '.priority == $p' "$f" >/dev/null 2>&1 && continue
+      tmp="${f}.tmp.$$"
+      if jq --argjson p "$prio" '.priority = $p' "$f" > "$tmp" 2>/dev/null; then
+        chmod 600 "$tmp" && mv "$tmp" "$f"
+        print -P "%F{green}[ccp-relay] priority ${prio} 已補回 ${email} (${f:t})%f" >&2
+        applied=1
+      else
+        rm -f "$tmp"
+        print -P "%F{red}[ccp-relay] 寫入失敗：${f:t}%f" >&2
+      fi
+    done
+  done
+  (( applied )) || print -P "[ccp-relay] priority 無需變更" >&2
+  return 0
+}
+
+ccp-gpt-relogin() {
+  local bin=${CCP_RELAY_AUTH_DIR:-$HOME/.cli-proxy-api}/bin/cli-proxy-api
+  if [[ ! -x "$bin" ]]; then
+    print -P "%F{red}[ccp-gpt] 找不到可執行檔 ${bin}%f" >&2
+    return 1
+  fi
+
+  local snapshot
+  snapshot=$(ccp-relay-priority-snapshot)
+  if [[ -n "$snapshot" ]]; then
+    print -P "[ccp-gpt] 登入前記下的 priority：" >&2
+    print -r -- "$snapshot" | sed 's/^/  /' >&2
+  else
+    print -P "%F{yellow}[ccp-gpt] 現有 codex 憑證都沒有 priority 欄位，登入後沒東西可補%f" >&2
+  fi
+
+  "$bin" --config "${CCP_RELAY_AUTH_DIR:-$HOME/.cli-proxy-api}/config.yaml" --codex-login "$@" || return
+
+  [[ -n "$snapshot" ]] && print -r -- "$snapshot" | ccp-relay-priority-apply
+  sleep 2
+  ccp-gpt-whoami
 }
 
 ccp-gpt() {
@@ -911,6 +969,10 @@ Available cc-vendor-bridge functions:
   ccp-gpt-fast      → Same routing and context as ccp-gpt; priority service tier for all GPT-5.6 requests
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
+  ccp-gpt-relogin   → Re-auth a Codex account AND restore the priority that --codex-login
+                      strips (upstream PR #3843, unmerged). Use instead of raw --codex-login.
+  ccp-relay-priority-snapshot / -apply
+                    → The snapshot/restore halves, usable standalone if priority went missing
   /model picker      → Choose GPT-5.6 Sol Fast and press s for this session only; routed subagents stay Standard
 
   ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
