@@ -733,8 +733,9 @@ ccp-gpt-whoami() {
     return 1
   fi
 
-  local -a broken=()
-  local serving="" serving_note="" any_usable=""
+  local -a broken=() idle=()
+  local serving="" serving_note="" serving_rs=0
+  local fallback="" fallback_email="" fallback_note="" any_usable=""
   local email plan prio disabled rs rf cs cf health
 
   while IFS=$'\t' read -r email plan prio disabled rs rf cs cf; do
@@ -746,29 +747,26 @@ ccp-gpt-whoami() {
       health=ok
     elif (( cf > 0 && cf >= cs )); then
       health=down
-    elif (( cs > 0 )); then
-      health=idle
     else
-      health=unknown
+      health=idle
     fi
 
     case "$health" in
       ok)
         any_usable=1
-        if [[ -z "$serving" ]]; then
+        if (( rs > serving_rs )); then
+          serving_rs=$rs
           serving="${email} (${plan})"
           serving_note="最近一小時 ${rs} 成功 / ${rf} 失敗"
         fi
         ;;
-      idle|unknown)
+      idle)
         any_usable=1
-        if [[ -z "$serving" ]]; then
-          serving="${email} (${plan})"
-          if [[ "$health" == idle ]]; then
-            serving_note="最近一小時無流量；累計 ${cs} 成功 / ${cf} 失敗"
-          else
-            serving_note="無任何流量紀錄，未經驗證（依 priority ${prio} 推測）"
-          fi
+        idle+=("${email}|${email} (${plan}, priority ${prio}) — 最近一小時無流量；累計 ${cs} 成功 / ${cf} 失敗")
+        if [[ -z "$fallback" ]]; then
+          fallback="${email} (${plan})"
+          fallback_email="$email"
+          fallback_note="無近期流量、未經驗證（依 priority ${prio} 推測）"
         fi
         ;;
       down|disabled)
@@ -779,10 +777,18 @@ ccp-gpt-whoami() {
 
   if [[ -n "$serving" ]]; then
     print -P "%F{green}[ccp-gpt] 服務中：${serving}%f  — ${serving_note}" >&2
+  elif [[ -n "$fallback" ]]; then
+    print -P "%F{yellow}[ccp-gpt] 預計使用：${fallback}%f  — ${fallback_note}" >&2
   fi
 
+  local entry shown_fallback=""
+  [[ -z "$serving" && -n "$fallback" ]] && shown_fallback="$fallback_email"
+  for entry in "${idle[@]}"; do
+    [[ "${entry%%|*}" == "$shown_fallback" ]] && continue
+    print -P "[ccp-gpt] 備援待命：${entry#*|}" >&2
+  done
+
   if (( ${#broken[@]} > 0 )); then
-    local entry
     for entry in "${broken[@]}"; do
       print -P "%F{red}[ccp-gpt] ⚠️  ${entry}%f" >&2
     done
