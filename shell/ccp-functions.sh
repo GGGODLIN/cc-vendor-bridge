@@ -15,6 +15,8 @@
 # Usage:
 #   ccp-deepseek                # default DeepSeek session
 #   ccp-deepseek -c             # continue last DeepSeek session
+#   ccp-deepseek-flash          # DeepSeek, ALL model slots forced to V4-Flash
+#   ccp-deepseek-pro            # DeepSeek, ALL model slots forced to V4-Pro
 #   ccp-kimi /path/to/proj      # open in specific dir
 #
 # Per-call override (env vars use ${VAR:-default} so caller can pre-set):
@@ -69,6 +71,30 @@ ccp-deepseek() {
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1000000}
     claude "$@"
   )
+}
+
+# ===== DeepSeek V4-Flash / V4-Pro — all model slots forced =====
+# Thin wrappers that pre-pin all 5 model slots (main / opus / sonnet / haiku /
+# subagent) then delegate to ccp-deepseek, which reuses the proxy health-check +
+# env convention. Pre-setting beats its ${VAR:-default} fallbacks, so a lingering
+# outer ANTHROPIC_MODEL can't redirect any slot to the other variant or Anthropic
+# (same anti-leak rationale as ccp-bruce's hard-set pins).
+ccp-deepseek-flash() {
+  ANTHROPIC_MODEL=deepseek-v4-flash \
+  ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-flash \
+  ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-flash \
+  ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash \
+  CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash \
+    ccp-deepseek "$@"
+}
+
+ccp-deepseek-pro() {
+  ANTHROPIC_MODEL=deepseek-v4-pro \
+  ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro \
+  ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro \
+  ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-pro \
+  CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-pro \
+    ccp-deepseek "$@"
 }
 
 # DISABLED: MOONSHOT_API_KEY not configured
@@ -960,6 +986,8 @@ ccp-list() {
 Available cc-vendor-bridge functions:
 
   ccp-deepseek      → DeepSeek V4-Pro / V4-Flash
+  ccp-deepseek-flash → DeepSeek V4-Flash (all model slots forced)
+  ccp-deepseek-pro   → DeepSeek V4-Pro (all model slots forced)
   ccp-glm           → Zhipu GLM-5.1 / 4.7-Flash (z.ai intl)
   ccp-mimo          → Xiaomi MiMo V2.5-Pro Token Plan (Singapore subscription)
   ccp-mimo-payg     → Xiaomi MiMo V2.5-Pro (intl PAYG)
