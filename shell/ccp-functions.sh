@@ -914,10 +914,18 @@ ccp-gpt() {
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Priority\ tier\ for\ the\ main\ agent}
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
-    # Codex OAuth backend window measured 2026-07-15: 364k accepted / ~400k rejected,
-    # consistent with Codex metadata 372k. Model itself is 1.05M via paid API only.
+    # Codex OAuth backend window re-probed 2026-07-31 by binary search against the relay:
+    # 371,306 accepted / 372,309 rejected — the hard ceiling is 372k, matching Codex
+    # metadata. Model itself is 1.05M via paid API only. Also drives the statusline's
+    # context_window_size (the /context command reports AUTO_COMPACT_WINDOW instead).
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-372000}
-    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-330000}
+    # Compact fires at min(window, max_context) - min(max_output, 20k) - 13k = 327,000.
+    # CC's own hard block sits at max_context - 23k = 349,000, so the gap is 22,000 —
+    # chosen to clear the largest overshoot across 44 real auto-compacts (21,415; CC
+    # only measures at turn boundaries, so it always fires above the nominal line).
+    # Raising this past 360,585 shrinks the gap below that overshoot; past 372,000 has
+    # no effect at all, since min() clamps it to CLAUDE_CODE_MAX_CONTEXT_TOKENS.
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-360000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     # Single-shot injection caps for the 372k window: oversized MCP output spills
     # to a temp file, oversized bash output truncates with a [KB removed] marker.
