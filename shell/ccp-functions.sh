@@ -1,6 +1,9 @@
 #!/usr/bin/env zsh
 # cc-vendor-bridge — Path 0 zsh functions
 #
+# ⚠️ 本檔在契約測試底下 — 改完必跑（從 repo root）：
+#   for t in tests/ccp-gpt-routing-fast.zsh tests/ccp-gpt-whoami.test.zsh tests/ccp-relay-priority.test.zsh; do zsh "$t" || break; done
+#
 # Each ccp-* function opens Claude Code pointed at a different vendor's
 # Anthropic-native endpoint, using a subshell so env vars don't leak.
 #
@@ -980,6 +983,133 @@ ccp-gpt-fast() {
   )
 }
 
+# ===== CLIProxyAPI relay, Gemini via Antigravity OAuth (qwe70301 AI Pro) =====
+# Split into two entry points because the Pro and Flash tiers draw on the same
+# subscription quota at very different rates — keeping them separate makes the
+# choice explicit at launch instead of buried in a slot table.
+#
+# Effort control (2026-08-07 probe, 3 rounds, stable):
+#   Model-name suffix WORKS — 'gemini-pro-agent(high)' and '(xhigh)' reliably
+#   produce thinking blocks (1532-1602 / 1320-1452 chars); bare name and '(low)'
+#   produce none (0/0/0). Parsed by CLIProxyAPI's reasoningEffortFromSuffix.
+#   CC's own effort selector does NOT work — output_config.effort={low,medium,
+#   high,xhigh} all yield 0 thinking chars; the relay strips reasoning effort for
+#   models with no thinking levels in its registry. So CLAUDE_CODE_ALWAYS_ENABLE_EFFORT
+#   is deliberately left off here: the picker would render but change nothing.
+#   high vs xhigh showed no consistent gap — Antigravity looks binary (on/off).
+#
+# Context window: 1,048,576 hard cap, stated verbatim by the upstream reject
+# ("exceeds the maximum number of tokens allowed 1048576") and confirmed by probe
+# (1,045,010 accepted / above it rejected). Same ceiling on Pro and Flash. That is
+# 2.8x the 372k Codex ceiling, so Skill(claude-api) is NOT blocked here.
+#
+# Per-call override:
+#   ANTHROPIC_MODEL='gemini-pro-agent(xhigh)' ccp-gemini-pro
+#   ANTHROPIC_MODEL=gemini-3.1-pro-low ccp-gemini-pro   # cheaper Pro brain
+
+# Shared pre-flight: relay liveness + Antigravity credential visibility. Every
+# Gemini model hangs off a single OAuth account (unlike ccp-gpt's two Codex
+# accounts), so surface which one is carrying the session before launch.
+_ccp-gemini-preflight() {
+  local caller=$1
+  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+    echo "$caller: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
+    return 1
+  fi
+  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+    echo "[$caller] relay not listening, kickstarting launchd service..." >&2
+    launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
+    local i=0
+    while (( i < 50 )); do
+      /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null && break
+      sleep 0.1; ((i++))
+    done
+    if (( i >= 50 )); then
+      print -P "%F{red}[$caller] relay did not become ready in 5s — check ~/.cli-proxy-api/logs/%f" >&2
+      return 1
+    fi
+  fi
+
+  local -a auths=(${HOME}/.cli-proxy-api/antigravity-*.json(N))
+  if (( ${#auths} == 0 )); then
+    print -P "%F{red}[$caller] 找不到 Antigravity 憑證 — Gemini 全線不可用%f" >&2
+    print -P "%F{red}          重登：~/.cli-proxy-api/bin/cli-proxy-api --config ~/.cli-proxy-api/config.yaml --antigravity-login%f" >&2
+    return 1
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    local email disabled expired
+    email=$(jq -r '.email // "?"'     "${auths[1]}" 2>/dev/null)
+    disabled=$(jq -r '.disabled // false' "${auths[1]}" 2>/dev/null)
+    expired=$(jq -r '.expired // "?"'  "${auths[1]}" 2>/dev/null)
+    if [[ "$disabled" == "true" ]]; then
+      print -P "%F{red}[$caller] Antigravity 帳號 $email 被停用中 — 這次會直接失敗%f" >&2
+      return 1
+    fi
+    print -P "%F{green}[$caller] 服務中：$email%f（憑證到期 ${expired}，relay 常駐時會自動續）" >&2
+  fi
+  return 0
+}
+
+# Pro tier — Gemini 3.1 Pro High. Thinking on by default via the (high) suffix.
+ccp-gemini-pro() {
+  _ccp-gemini-preflight ccp-gemini-pro || return 1
+  (
+    source ~/.cli-proxy-api/keys.env
+    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
+    export CC_VENDOR=gemini-pro
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gemini-pro-agent(high)}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gemini-pro-agent(high)}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gemini-pro-agent(high)}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gemini-pro-agent}"
+    # HAIKU slot stays on Flash: background summarisation does not need Pro quota.
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gemini-3.5-flash-low}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-gemini-3.1-pro-low}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Gemini 3.1 Pro Low}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Cheaper Pro brain, thinking off}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-gemini-pro-agent}"
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
+    # Same 22k gap ccp-gpt leaves for compact overshoot; no Gemini overshoot
+    # sample exists yet, so this is borrowed rather than measured.
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    # WebSearch: same unprobed relay translation path as ccp-relay / ccp-gpt
+    # (docs/caveats.md §13b). Unlike ccp-gpt, Skill(claude-api) stays allowed —
+    # its ~200k-token injection fits the 1M window.
+    claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+  )
+}
+
+# Flash tier — same 1M window, a fraction of the quota burn. Thinking off by
+# default; append (high) to any slot to turn it on.
+ccp-gemini-flash() {
+  _ccp-gemini-preflight ccp-gemini-flash || return 1
+  (
+    source ~/.cli-proxy-api/keys.env
+    unset ANTHROPIC_API_KEY
+    export CC_VENDOR=gemini-flash
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gemini-3.6-flash-high}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gemini-3.6-flash-high}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gemini-3.6-flash-high}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gemini-3.6-flash-high}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gemini-3.5-flash-low}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-gemini-3.6-flash-high(high)}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Gemini 3.6 Flash Thinking}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Same Flash model with reasoning turned on}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-gemini-3.5-flash-low}"
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+  )
+}
+
 # ===== Helper: list available functions =====
 ccp-list() {
   cat <<EOF
@@ -1009,6 +1139,15 @@ Available cc-vendor-bridge functions:
   ccp-relay-priority-snapshot / -apply
                     → The snapshot/restore halves, usable standalone if priority went missing
   /model picker      → Choose GPT-5.6 Sol Fast and press s for this session only; routed subagents stay Standard
+
+  ccp-gemini-pro    → CLIProxyAPI relay, Gemini 3.1 Pro High via Antigravity OAuth
+                      (OPUS/FABLE→gemini-pro-agent(high) / SONNET→gemini-pro-agent /
+                      HAIKU→gemini-3.5-flash-low), 1,048,576 context, thinking on
+  ccp-gemini-flash  → Same relay and 1M context, all slots on Gemini 3.6 Flash;
+                      thinking off by default, /model picker offers the thinking variant
+                      Effort: use the model-name suffix, NOT CC's effort picker —
+                      ANTHROPIC_MODEL='gemini-pro-agent(xhigh)' ccp-gemini-pro
+                      (CC's output_config.effort is stripped by the relay for Gemini)
 
   ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
                       (workaround caveat 11: 跨 vendor resume 會炸 thinking signature)
