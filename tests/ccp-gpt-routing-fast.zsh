@@ -3,7 +3,9 @@
 set -u
 
 ROOT="${0:A:h:h}"
+alias claude='claude --settings '\''{"ultracode": true}'\'''
 source "$ROOT/shell/ccp-functions.sh"
+unalias claude
 
 failures=0
 
@@ -51,6 +53,16 @@ assert_not_contains \
   "ccp-gpt does not flatten subagent routing" \
   "${functions[ccp-gpt]}" \
   "CLAUDE_CODE_SUBAGENT_MODEL="
+
+assert_not_contains \
+  "ccp-gpt does not inherit the global ultracode alias" \
+  "${functions[ccp-gpt]}" \
+  "ultracode"
+
+assert_contains \
+  "ccp-gpt defaults to max effort" \
+  "${functions[ccp-gpt]}" \
+  "command claude --effort max"
 
 assert_contains \
   "ccp-gpt exposes the Fast main-model option" \

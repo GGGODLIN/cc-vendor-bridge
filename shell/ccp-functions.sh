@@ -968,7 +968,7 @@ ccp-gpt() {
     # at 372k it still eats >half the window. Fine under fable[1m]; fatal on ~372k models.
     # --model flag beats settings.json "model" (user pins claude-fable-5[1m] there,
     # which otherwise silently overrides ANTHROPIC_MODEL and mis-routes on the relay).
-    claude --model "$ANTHROPIC_MODEL" --disallowed-tools 'WebSearch' 'Skill(claude-api)' "$@"
+    command claude --effort max --model "$ANTHROPIC_MODEL" --disallowed-tools 'WebSearch' 'Skill(claude-api)' "$@"
   )
 }
 
