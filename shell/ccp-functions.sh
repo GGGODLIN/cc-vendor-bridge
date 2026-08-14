@@ -1093,15 +1093,15 @@ ccp-gemini-flash() {
     export CC_VENDOR=gemini-flash
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gemini-3.6-flash-high}"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gemini-3.6-flash-high}"
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gemini-3.6-flash-high}"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gemini-3.6-flash-high}"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gemini-3.5-flash-low}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-gemini-3.6-flash-high(high)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Gemini 3.6 Flash Thinking}"
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gemini-3.7-flash-high}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gemini-3.7-flash-high}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gemini-3.7-flash-high}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gemini-3.7-flash-high}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gemini-3.7-flash-high}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-gemini-3.7-flash-high(high)}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Gemini 3.7 Flash Thinking}"
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Same Flash model with reasoning turned on}"
-    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-gemini-3.5-flash-low}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-gemini-3.7-flash-high}"
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
@@ -1143,7 +1143,7 @@ Available cc-vendor-bridge functions:
   ccp-gemini-pro    → CLIProxyAPI relay, Gemini 3.1 Pro High via Antigravity OAuth
                       (OPUS/FABLE→gemini-pro-agent(high) / SONNET→gemini-pro-agent /
                       HAIKU→gemini-3.5-flash-low), 1,048,576 context, thinking on
-  ccp-gemini-flash  → Same relay and 1M context, all slots on Gemini 3.6 Flash;
+  ccp-gemini-flash  → Same relay and 1M context, all slots on Gemini 3.7 Flash;
                       thinking off by default, /model picker offers the thinking variant
                       Effort: use the model-name suffix, NOT CC's effort picker —
                       ANTHROPIC_MODEL='gemini-pro-agent(xhigh)' ccp-gemini-pro
