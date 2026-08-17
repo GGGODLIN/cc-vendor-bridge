@@ -1,32 +1,39 @@
 #!/usr/bin/env bash
-# ccp-bruce-watch — foreground health watcher for Bruce token proxy.
+# ccp-bruce-watch — foreground dual-metric watcher for Bruce token proxy.
 #
-# Monitors /v1/pool/status healthPercent (no token cost; admin-exposed endpoint).
-# Verified leading indicator 2026-06-20 (636-sample / 2h9min correlation run):
-# messages stayed 100% 2xx while health swung 86.67% → 20%, so dropping health
-# gives advance warning before user-facing 503.
+# Monitors /v1/pool/status (no token cost; admin-exposed endpoint). Two metrics:
 #
-# Pool size = 15 backing accounts (all observed health values are 6.67%
-# multiples). Max ever seen: 86.67% (13/15 healthy; 2 always reserve/cooling).
-# Min ever seen: 20% (3/15). The exact healthPercent → 503 threshold is still
-# unverified (didn't hit 503 during the calibration run).
+# 1. healthPercent — pool capacity (5h quota remaining across 15-account pool).
+#    Verified leading indicator 2026-06-20 (636-sample / 2h9min run):
+#    messages stayed 100% 2xx while health swung 86.67% → 20%. 6.67% step.
+#    Max observed: 86.67% (13/15). Min observed: 20% (3/15). 503 threshold
+#    still empirically unconfirmed.
 #
-# Three thresholds (default tuned to the 86.67–20 observed range):
-#   --warn-below N        yellow visual only, no notification (default 60)
-#   --alert-below N       red + macOS notification (default 40)
-#   --critical-below N    red bold + escalated notification (default 20)
+# 2. serviceStabilityPercent — service-layer reliability (NEW 2026-06-28).
+#    Continuous percentage, 100 = all-green. Presumed to track success rate /
+#    inverse of error rate. NO historical calibration yet — thresholds below
+#    are presumptive (≥80 normal / 50-80 wobble / <50 unstable).
 #
-# Each threshold fires once on cross-down. Recovery fires once when health
-# climbs back above the alert threshold.
+# Thresholds (each metric tracked independently, fires once on cross-down,
+# recovery fires once when value climbs back above its alert threshold):
+#   --warn-below N           health: yellow only       (default 60)
+#   --alert-below N          health: red + notify      (default 40)
+#   --critical-below N       health: bold red + notify (default 20)
+#   --stab-warn-below N      stability: yellow only    (default 80)
+#   --stab-alert-below N     stability: red + notify   (default 70)
+#   --stab-critical-below N  stability: bold + notify  (default 50)
 #
 # Usage:
 #   ccp-bruce-watch                              # 10s interval, default thresholds
 #   ccp-bruce-watch --interval 5
 #   ccp-bruce-watch --alert-below 50 --critical-below 30
+#   ccp-bruce-watch --stab-alert-below 60        # tune stability alert
 #
 # Stop: Ctrl-C / close terminal (SIGHUP) / kill -TERM. Trap prints a summary.
 #
 # Log: appends one JSON line per probe to ~/.claude/logs/bruce-pool-health.jsonl
+#      Fields: ts, endpoint_status, endpoint_latency_ms, health_percent,
+#              service_stability_percent
 
 set -uo pipefail
 
@@ -35,19 +42,25 @@ TIMEOUT=8
 WARN_BELOW=60
 ALERT_BELOW=40
 CRITICAL_BELOW=20
+STAB_WARN_BELOW=80
+STAB_ALERT_BELOW=70
+STAB_CRITICAL_BELOW=50
 URL="https://bruce-token-proxy-2kjfv3lttq-de.a.run.app/v1/pool/status"
 LOG_DIR="${HOME}/.claude/logs"
 LOG_FILE="${LOG_DIR}/bruce-pool-health.jsonl"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --interval)        INTERVAL="$2";        shift 2 ;;
-    --timeout)         TIMEOUT="$2";         shift 2 ;;
-    --warn-below)      WARN_BELOW="$2";      shift 2 ;;
-    --alert-below)     ALERT_BELOW="$2";     shift 2 ;;
-    --critical-below)  CRITICAL_BELOW="$2";  shift 2 ;;
+    --interval)             INTERVAL="$2";             shift 2 ;;
+    --timeout)              TIMEOUT="$2";              shift 2 ;;
+    --warn-below)           WARN_BELOW="$2";           shift 2 ;;
+    --alert-below)          ALERT_BELOW="$2";          shift 2 ;;
+    --critical-below)       CRITICAL_BELOW="$2";       shift 2 ;;
+    --stab-warn-below)      STAB_WARN_BELOW="$2";      shift 2 ;;
+    --stab-alert-below)     STAB_ALERT_BELOW="$2";     shift 2 ;;
+    --stab-critical-below)  STAB_CRITICAL_BELOW="$2";  shift 2 ;;
     -h|--help)
-      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "ccp-bruce-watch: unknown arg $1" >&2; exit 1 ;;
@@ -73,8 +86,13 @@ N_ENDPOINT_ERR=0
 HEALTH_MIN=100
 HEALTH_MAX=0
 HEALTH_SEEN=0
+STAB_MIN=100
+STAB_MAX=0
+STAB_SEEN=0
 ALERT_FIRED=0
 CRITICAL_FIRED=0
+STAB_ALERT_FIRED=0
+STAB_CRITICAL_FIRED=0
 ENDPOINT_ALERTED=0
 
 cleanup() {
@@ -83,7 +101,10 @@ cleanup() {
   printf '%s[ccp-bruce-watch stopped]%s started %s · ran %ds · %d probes · %d endpoint errors\n' \
     "$C_BOLD" "$C_RESET" "$START_HUMAN" "$elapsed" "$N_PROBE" "$N_ENDPOINT_ERR" >&2
   if [[ "$HEALTH_SEEN" == 1 ]]; then
-    printf '  health observed: min=%s%% · max=%s%%\n' "$HEALTH_MIN" "$HEALTH_MAX" >&2
+    printf '  health observed:    min=%s%% · max=%s%%\n' "$HEALTH_MIN" "$HEALTH_MAX" >&2
+  fi
+  if [[ "$STAB_SEEN" == 1 ]]; then
+    printf '  stability observed: min=%s%% · max=%s%%\n' "$STAB_MIN" "$STAB_MAX" >&2
   fi
   printf '  log: %s\n' "$LOG_FILE" >&2
   exit 0
@@ -95,8 +116,11 @@ notify() {
   osascript -e "display notification \"$msg\" with title \"$title\" sound name \"Sosumi\"" 2>/dev/null || true
 }
 
-printf '%s[ccp-bruce-watch]%s interval=%ds timeout=%ds · thresholds: warn<%d alert<%d critical<%d · log=%s · Ctrl-C to stop\n' \
-  "$C_BOLD" "$C_RESET" "$INTERVAL" "$TIMEOUT" "$WARN_BELOW" "$ALERT_BELOW" "$CRITICAL_BELOW" "$LOG_FILE"
+printf '%s[ccp-bruce-watch]%s interval=%ds timeout=%ds · health<%d/%d/%d · stab<%d/%d/%d · log=%s · Ctrl-C to stop\n' \
+  "$C_BOLD" "$C_RESET" "$INTERVAL" "$TIMEOUT" \
+  "$WARN_BELOW" "$ALERT_BELOW" "$CRITICAL_BELOW" \
+  "$STAB_WARN_BELOW" "$STAB_ALERT_BELOW" "$STAB_CRITICAL_BELOW" \
+  "$LOG_FILE"
 
 while true; do
   N_PROBE=$((N_PROBE + 1))
@@ -113,6 +137,7 @@ while true; do
   [[ -z "$http_code" || ! "$http_code" =~ ^[0-9]{3}$ ]] && http_code="000"
   latency_ms=$(( (t1 - t0) / 1000000 ))
   health_raw=$(jq -r '.healthPercent // empty' "$body_file" 2>/dev/null)
+  stab_raw=$(jq -r '.serviceStabilityPercent // empty' "$body_file" 2>/dev/null)
   rm -f "$body_file"
 
   alert_suffix=""
@@ -120,7 +145,9 @@ while true; do
   if [[ ! "$http_code" =~ ^2 ]] || [[ -z "$health_raw" ]]; then
     N_ENDPOINT_ERR=$((N_ENDPOINT_ERR + 1))
     health_arg="null"
+    stab_arg="null"
     health_display="(no data)"
+    stab_display=""
     color="$C_RED"
     if [[ "$ENDPOINT_ALERTED" == 0 ]]; then
       alert_suffix="  ${C_BOLD}→ ALERT pool/status endpoint failed${C_RESET}"
@@ -129,10 +156,21 @@ while true; do
     fi
   else
     health_arg="$health_raw"
-    health_display=$(printf '%6s%%' "$health_raw")
+    health_display=$(printf 'h=%5s%%' "$health_raw")
     HEALTH_SEEN=1
     HEALTH_MIN=$(jq -nr --argjson new "$health_raw" --argjson cur "$HEALTH_MIN" '[$new,$cur]|min')
     HEALTH_MAX=$(jq -nr --argjson new "$health_raw" --argjson cur "$HEALTH_MAX" '[$new,$cur]|max')
+
+    if [[ -n "$stab_raw" ]]; then
+      stab_arg="$stab_raw"
+      stab_display=$(printf ' s=%5s%%' "$stab_raw")
+      STAB_SEEN=1
+      STAB_MIN=$(jq -nr --argjson new "$stab_raw" --argjson cur "$STAB_MIN" '[$new,$cur]|min')
+      STAB_MAX=$(jq -nr --argjson new "$stab_raw" --argjson cur "$STAB_MAX" '[$new,$cur]|max')
+    else
+      stab_arg="null"
+      stab_display=" s=    ?"
+    fi
 
     if [[ "$ENDPOINT_ALERTED" == 1 ]]; then
       printf '%s[%s] endpoint recovered%s\n' "$C_BOLD" "$ts_human" "$C_RESET"
@@ -144,10 +182,19 @@ while true; do
     lt_alert=$(jq -nr --argjson v "$health_raw" --argjson t "$ALERT_BELOW" '$v < $t')
     lt_warn=$(jq -nr --argjson v "$health_raw" --argjson t "$WARN_BELOW" '$v < $t')
 
-    if   [[ "$lt_critical" == "true" ]]; then color="${C_BOLD}${C_RED}"
-    elif [[ "$lt_alert" == "true" ]];    then color="$C_RED"
-    elif [[ "$lt_warn" == "true" ]];     then color="$C_YELLOW"
-    else                                       color="$C_GREEN"
+    if [[ -n "$stab_raw" ]]; then
+      stab_lt_critical=$(jq -nr --argjson v "$stab_raw" --argjson t "$STAB_CRITICAL_BELOW" '$v < $t')
+      stab_lt_alert=$(jq -nr --argjson v "$stab_raw" --argjson t "$STAB_ALERT_BELOW" '$v < $t')
+      stab_lt_warn=$(jq -nr --argjson v "$stab_raw" --argjson t "$STAB_WARN_BELOW" '$v < $t')
+    else
+      stab_lt_critical="false"; stab_lt_alert="false"; stab_lt_warn="false"
+    fi
+
+    # Combined color: worst-of-both — whichever metric is most degraded wins.
+    if   [[ "$lt_critical" == "true" || "$stab_lt_critical" == "true" ]]; then color="${C_BOLD}${C_RED}"
+    elif [[ "$lt_alert" == "true"    || "$stab_lt_alert" == "true"    ]]; then color="$C_RED"
+    elif [[ "$lt_warn" == "true"     || "$stab_lt_warn" == "true"     ]]; then color="$C_YELLOW"
+    else                                                                       color="$C_GREEN"
     fi
 
     if [[ "$lt_critical" == "true" && "$CRITICAL_FIRED" == 0 ]]; then
@@ -167,10 +214,28 @@ while true; do
       ALERT_FIRED=0
       CRITICAL_FIRED=0
     fi
+
+    if [[ "$stab_lt_critical" == "true" && "$STAB_CRITICAL_FIRED" == 0 ]]; then
+      alert_suffix="${alert_suffix}  ${C_BOLD}→ STAB CRITICAL (stability=${stab_raw}% < ${STAB_CRITICAL_BELOW}%)${C_RESET}"
+      notify "ccp-bruce STAB CRITICAL" "serviceStability=$stab_raw% (below $STAB_CRITICAL_BELOW% — service heavily degraded; pause large workflows)"
+      STAB_CRITICAL_FIRED=1
+      STAB_ALERT_FIRED=1
+    elif [[ "$stab_lt_alert" == "true" && "$STAB_ALERT_FIRED" == 0 ]]; then
+      alert_suffix="${alert_suffix}  ${C_BOLD}→ STAB ALERT (stability=${stab_raw}% < ${STAB_ALERT_BELOW}%)${C_RESET}"
+      notify "ccp-bruce stab alert" "serviceStability=$stab_raw% (below $STAB_ALERT_BELOW%)"
+      STAB_ALERT_FIRED=1
+    fi
+
+    if [[ "$stab_lt_alert" == "false" && "$STAB_ALERT_FIRED" == 1 ]]; then
+      printf '%s[%s] stability recovered → stability=%s%%%s\n' "$C_BOLD" "$ts_human" "$stab_raw" "$C_RESET"
+      notify "ccp-bruce stab recovered" "stability=$stab_raw% (back above $STAB_ALERT_BELOW%)"
+      STAB_ALERT_FIRED=0
+      STAB_CRITICAL_FIRED=0
+    fi
   fi
 
-  printf '%s[%s] %s%s  %sHTTP %s · %4sms%s%s\n' \
-    "$color" "$ts_human" "$health_display" "$C_RESET" \
+  printf '%s[%s] %s%s%s  %sHTTP %s · %4sms%s%s\n' \
+    "$color" "$ts_human" "$health_display" "$stab_display" "$C_RESET" \
     "$C_DIM" "$http_code" "$latency_ms" "$C_RESET" \
     "$alert_suffix"
 
@@ -179,7 +244,8 @@ while true; do
     --argjson endpoint_status "$http_code" \
     --argjson endpoint_latency_ms "$latency_ms" \
     --argjson health_percent "$health_arg" \
-    '{ts:$ts, endpoint_status:$endpoint_status, endpoint_latency_ms:$endpoint_latency_ms, health_percent:$health_percent}' \
+    --argjson service_stability_percent "$stab_arg" \
+    '{ts:$ts, endpoint_status:$endpoint_status, endpoint_latency_ms:$endpoint_latency_ms, health_percent:$health_percent, service_stability_percent:$service_stability_percent}' \
     >> "$LOG_FILE"
 
   sleep "$INTERVAL"

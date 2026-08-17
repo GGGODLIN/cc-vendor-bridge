@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# ccp-watch-render — stdin: NDJSON stream from `claude -p --output-format stream-json`
+# stdout: human-readable live render of the agent loop.
+#
+# Robustness:
+#   - Pre-filter with `grep '^{'` so stray non-JSON lines (stderr leaks) never reach jq.
+#   - Unknown event types render as faint breadcrumbs (`? <type>`) instead of silent drops.
+#   - All system/<subtype> events render (not just init).
+#   - EOF sentinel (`{"type":"ccp_watch_eof"}`) lets the upstream wrapper terminate the
+#     tail|jq|while pipeline cleanly so the side pane returns to a normal prompt.
+
+set -u
+
+DIM='\033[2m'
+BOLD='\033[1m'
+CYAN='\033[36m'
+YELLOW='\033[33m'
+MAGENTA='\033[35m'
+GREEN='\033[32m'
+RED='\033[31m'
+RESET='\033[0m'
+
+JQ_FILTER='
+  if .type == "ccp_watch_eof" then
+    "EOF\t\t" | halt
+
+  elif .type == "system" and .subtype == "init" then
+    "SYS_INIT\t" + (.session_id // "?") + "\t" + (.model // "?") + "\t" + (.cwd // "?")
+
+  elif .type == "system" then
+    "SYS\t" + (.subtype // "?") + "\t" + (.hook_event_name // .source // "")
+
+  elif .type == "stream_event" and .event.type == "content_block_start" then
+    (.event.content_block.type // "?") as $bt |
+    if $bt == "thinking" then "BLK_START\tthinking\t"
+    elif $bt == "text" then "BLK_START\ttext\t"
+    elif $bt == "tool_use" then "BLK_START\ttool_use\t" + (.event.content_block.name // "?")
+    else "BLK_START\t" + $bt + "\t" end
+
+  elif .type == "stream_event" and .event.type == "content_block_delta" then
+    (.event.delta.type // "?") as $dt |
+    if $dt == "thinking_delta" then "DELTA\tthinking\t" + (.event.delta.thinking // "")
+    elif $dt == "text_delta" then "DELTA\ttext\t" + (.event.delta.text // "")
+    elif $dt == "input_json_delta" then "DELTA\ttool_input\t" + (.event.delta.partial_json // "")
+    elif $dt == "signature_delta" then empty
+    else "DELTA\tunknown:" + $dt + "\t…" end
+
+  elif .type == "stream_event" and .event.type == "content_block_stop" then "BLK_STOP\t\t"
+  elif .type == "stream_event" and .event.type == "message_stop" then "MSG_STOP\t\t"
+  elif .type == "stream_event" and (.event.type == "message_start" or .event.type == "message_delta" or .event.type == "ping") then empty
+  elif .type == "stream_event" then "UNK\tstream_event/" + (.event.type // "?") + "\t"
+
+  elif .type == "assistant" then empty
+
+  elif .type == "result" then
+    "RESULT\t" + (.duration_ms|tostring) + "\t" + (.num_turns|tostring) + "\t" + ((.total_cost_usd // 0)|tostring) + "\t" + (.subtype // "?")
+
+  elif .type == "rate_limit_event" then
+    "RATE\t" + (.message.status // "?") + "\t" + (.message.rateLimitType // "?")
+
+  else "UNK\t" + (.type // "no-type") + "\t" end
+'
+
+# Pre-filter non-JSON lines so jq does not abort the pipeline on stderr noise
+grep --line-buffered '^{' \
+  | jq -r --unbuffered "${JQ_FILTER}" \
+  | while IFS=$'\t' read -r tag a b c d; do
+  case "$tag" in
+    SYS_INIT)
+      printf "\n${BOLD}${CYAN}┌─ ccp-watch ─────────────────────${RESET}\n"
+      printf "${DIM}│ session: ${a:0:8}…  model: ${b}${RESET}\n"
+      printf "${DIM}│ cwd: ${c}${RESET}\n"
+      printf "${BOLD}${CYAN}└─${RESET}\n"
+      ;;
+    SYS)
+      if [[ -n "${b:-}" ]]; then
+        printf "${DIM}· system/${a} ${b}${RESET}\n"
+      else
+        printf "${DIM}· system/${a}${RESET}\n"
+      fi
+      ;;
+    BLK_START)
+      case "$a" in
+        thinking) printf "\n${MAGENTA}▶ thinking${RESET}\n  ${DIM}" ;;
+        text)     printf "\n${GREEN}▶ text${RESET}\n  " ;;
+        tool_use) printf "\n${YELLOW}▶ tool: ${BOLD}${b}${RESET}\n  ${DIM}" ;;
+        *)        printf "\n${DIM}▶ ${a}${RESET}\n  " ;;
+      esac
+      ;;
+    DELTA)
+      printf "%s" "$b"
+      ;;
+    BLK_STOP)
+      printf "${RESET}\n"
+      ;;
+    MSG_STOP)
+      printf "${DIM}──── turn end ────${RESET}\n"
+      ;;
+    RESULT)
+      dur_s=$(awk -v ms="$a" 'BEGIN{printf "%.1f", ms/1000}')
+      cost=$(awk -v c="$c" 'BEGIN{printf "%.4f", c}')
+      printf "\n${BOLD}${CYAN}┌─ result (${d}) ─────────────────${RESET}\n"
+      printf "${BOLD}${CYAN}│ ${RESET}duration: ${dur_s}s   turns: ${b}   cost: \$${cost}\n"
+      printf "${BOLD}${CYAN}└─${RESET}\n"
+      ;;
+    RATE)
+      printf "${DIM}[rate-limit: ${a} / ${b}]${RESET}\n"
+      ;;
+    EOF)
+      printf "${DIM}──── stream end ────${RESET}\n"
+      exit 0
+      ;;
+    UNK)
+      printf "${DIM}? ${a}${RESET}\n"
+      ;;
+  esac
+done

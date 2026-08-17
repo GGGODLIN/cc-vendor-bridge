@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# ccp-watch — dispatch a `claude -p` task with a cmux side-pane live renderer.
+#
+# Usage:
+#   ccp-watch "<task>"                        # native Anthropic (your CC subscription)
+#   ccp-watch --vendor deepseek "<task>"      # route via ccp-deepseek-rescue
+#   ccp-watch --vendor glm      "<task>"      # via ccp-glm-rescue
+#   ccp-watch --vendor mimo     "<task>"      # via ccp-mimo-rescue
+#   ccp-watch --vendor mimo-payg "<task>"
+#
+# Requires: running inside cmux (CMUX_WORKSPACE_ID set).
+#
+# Layout policy: first invocation splits main pane right (50/50). Subsequent
+# concurrent invocations split DOWN off the latest existing ccp-watch side pane,
+# stacking vertically in the side column — main pane stays at ~50%.
+#
+# Non-TTY safety: claude's stdin is closed (</dev/null) and stderr split to a
+# sibling .err file so subagent (Bash-tool) dispatch works the same as terminal.
+
+set -euo pipefail
+
+VENDOR=""
+SUPPORTED_VENDORS="deepseek glm mimo mimo-payg"
+
+# Parse leading flags
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --vendor)
+      VENDOR="${2:-}"
+      if [[ -z "$VENDOR" ]]; then
+        echo "ccp-watch: --vendor requires an argument (one of: $SUPPORTED_VENDORS)" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --vendor=*)
+      VENDOR="${1#--vendor=}"
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -h|--help)
+      sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: ccp-watch [--vendor <name>] \"<task>\"" >&2
+  exit 1
+fi
+TASK="$*"
+
+# Validate vendor against supported set
+if [[ -n "$VENDOR" ]]; then
+  if ! printf '%s\n' $SUPPORTED_VENDORS | grep -qx "$VENDOR"; then
+    echo "ccp-watch: unsupported vendor '$VENDOR' (supported: $SUPPORTED_VENDORS)" >&2
+    exit 1
+  fi
+fi
+
+if [[ -z "${CMUX_WORKSPACE_ID:-}" ]]; then
+  echo "ccp-watch: not inside cmux (CMUX_WORKSPACE_ID empty). Run from a cmux terminal." >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RENDERER="${SCRIPT_DIR}/ccp-watch-render"
+if [[ ! -x "$RENDERER" ]]; then
+  echo "ccp-watch: renderer not found or not executable: $RENDERER" >&2
+  exit 3
+fi
+
+# Probe vendor function exists in zsh (fail fast before opening pane / acquiring lock)
+if [[ -n "$VENDOR" ]]; then
+  if ! zsh -ic "whence ccp-${VENDOR}-rescue >/dev/null 2>&1" </dev/null; then
+    echo "ccp-watch: ccp-${VENDOR}-rescue not found in zsh (check ~/.zshrc sourcing of plugin/sidecar.sh, and vendor API key configured)" >&2
+    exit 6
+  fi
+fi
+
+# Unique stream + stderr files per invocation
+TS="$(date +%s)"
+STREAM="/tmp/ccp-watch-$$-${TS}.ndjson"
+ERR="/tmp/ccp-watch-$$-${TS}.err"
+: > "$STREAM"
+: > "$ERR"
+
+# ────────────────────────────────────────────────────────────────────────────
+# Side-pane registry: tracks LIVE ccp-watch surfaces so concurrent dispatches
+# can stack vertically off each other instead of recursively shrinking main.
+#
+# Lock uses atomic mkdir (portable, no flock dependency — macOS ships no flock).
+# Stale locks (older than LOCK_STALE_SEC) are force-taken to recover from crashes.
+# ────────────────────────────────────────────────────────────────────────────
+REGISTRY=/tmp/ccp-watch-active.surfaces
+LOCKDIR=/tmp/ccp-watch.lock.d
+LOCK_TIMEOUT_SEC=10
+LOCK_STALE_SEC=60
+
+acquire_lock() {
+  local i=0 max=$((LOCK_TIMEOUT_SEC * 20))  # 50ms steps
+  while ! mkdir "$LOCKDIR" 2>/dev/null; do
+    if [[ -d "$LOCKDIR" ]]; then
+      local mtime now age
+      mtime=$(stat -f %m "$LOCKDIR" 2>/dev/null || stat -c %Y "$LOCKDIR" 2>/dev/null || echo 0)
+      now=$(date +%s)
+      age=$(( now - mtime ))
+      if (( age > LOCK_STALE_SEC )); then
+        rmdir "$LOCKDIR" 2>/dev/null || true
+        continue
+      fi
+    fi
+    sleep 0.05
+    i=$((i+1))
+    if (( i > max )); then
+      echo "ccp-watch: lock timeout after ${LOCK_TIMEOUT_SEC}s ($LOCKDIR)" >&2
+      return 1
+    fi
+  done
+}
+
+release_lock() {
+  rmdir "$LOCKDIR" 2>/dev/null || true
+}
+
+# Critical section: prune dead entries → pick split target → split → register
+acquire_lock || exit 5
+
+LIVE=()
+if [[ -f "$REGISTRY" ]]; then
+  while IFS= read -r s; do
+    [[ -z "$s" ]] && continue
+    if cmux identify --surface "$s" --json >/dev/null 2>&1; then
+      LIVE+=("$s")
+    fi
+  done < "$REGISTRY"
+fi
+
+# Rewrite registry with only live entries
+if (( ${#LIVE[@]} > 0 )); then
+  printf '%s\n' "${LIVE[@]}" > "$REGISTRY"
+else
+  : > "$REGISTRY"
+fi
+
+# Pick split target: latest live ccp-watch surface, or none → split focused (main)
+TARGET=""
+if (( ${#LIVE[@]} > 0 )); then
+  TARGET="${LIVE[${#LIVE[@]}-1]}"
+fi
+
+if [[ -n "$TARGET" ]]; then
+  SPLIT_OUT="$(cmux new-split down --surface "$TARGET" --focus false 2>&1)"
+else
+  SPLIT_OUT="$(cmux new-split right --focus false 2>&1)"
+fi
+
+if [[ ! "$SPLIT_OUT" =~ surface:([0-9]+) ]]; then
+  release_lock
+  echo "ccp-watch: failed to split cmux pane: $SPLIT_OUT" >&2
+  exit 4
+fi
+SURFACE="surface:${BASH_REMATCH[1]}"
+
+# Register my surface
+echo "$SURFACE" >> "$REGISTRY"
+
+release_lock
+
+cleanup() {
+  # EOF sentinel lets the renderer halt cleanly, breaking its tail|jq|while pipeline
+  echo '{"type":"ccp_watch_eof"}' >> "$STREAM" 2>/dev/null || true
+  # Give user a moment to see the result card; override with CCP_WATCH_DWELL=N
+  sleep "${CCP_WATCH_DWELL:-5}" || true
+  cmux close-surface --surface "$SURFACE" 2>/dev/null || true
+
+  # Unregister from side-pane registry (under lock)
+  if acquire_lock; then
+    if [[ -f "$REGISTRY" ]]; then
+      grep -v "^${SURFACE}$" "$REGISTRY" > "${REGISTRY}.tmp" 2>/dev/null || : > "${REGISTRY}.tmp"
+      mv "${REGISTRY}.tmp" "$REGISTRY"
+    fi
+    release_lock
+  fi
+
+  echo "▸ stream archived: $STREAM" >&2
+  if [[ -s "$ERR" ]]; then
+    echo "▸ stderr archived: $ERR ($(wc -l < "$ERR" | tr -d ' ') lines)" >&2
+  fi
+}
+trap cleanup EXIT INT TERM
+
+# Tell the side pane to start tailing + rendering.
+SIDE_CMD="clear; printf '\\033[2m[ccp-watch] tailing %s\\033[0m\\n' '$STREAM'; tail -F '$STREAM' | '$RENDERER'"
+cmux send --surface "$SURFACE" "$SIDE_CMD" >/dev/null
+cmux send-key --surface "$SURFACE" Enter >/dev/null
+
+# Tiny pause so the side pane is ready to tail before we start writing
+sleep 0.5
+
+LAYOUT_NOTE="(split-right from main)"
+[[ -n "$TARGET" ]] && LAYOUT_NOTE="(split-down off ${TARGET})"
+
+echo "▸ ccp-watch dispatch (${VENDOR:-claude}, side pane: $SURFACE ${LAYOUT_NOTE})"
+echo "  task: $TASK"
+echo ""
+
+# Run claude / vendor. Critical bits:
+#   </dev/null         — prevents stdin block in non-TTY parents (subagent dispatch)
+#   2>"$ERR"           — keeps stream pure NDJSON; renderer's grep '^{' filter is a second line of defense
+#   tee -a "$STREAM"   — fans NDJSON to side pane while we extract final text for main pane
+if [[ -n "$VENDOR" ]]; then
+  # Vendor path: ccp-*-rescue is a zsh function — invoke via interactive zsh
+  # so ~/.zshrc → plugin/sidecar.sh → function definition is loaded.
+  # Task passed via env var to avoid quote escaping with arbitrary user input.
+  CCP_WATCH_TASK="$TASK" zsh -ic "ccp-${VENDOR}-rescue --output-format stream-json --verbose --include-partial-messages \"\$CCP_WATCH_TASK\"" \
+    </dev/null \
+    2>"$ERR" \
+    | tee -a "$STREAM" \
+    | jq -r --unbuffered '
+        select(.type == "result")
+        | .result // ""
+      ' || true
+else
+  claude -p \
+    --output-format stream-json \
+    --verbose \
+    --include-partial-messages \
+    "$TASK" \
+    </dev/null \
+    2>"$ERR" \
+    | tee -a "$STREAM" \
+    | jq -r --unbuffered '
+        select(.type == "result")
+        | .result // ""
+      ' || true
+fi
+
+# Sanity check: stream must contain a system event or claude never started a turn
+if ! grep -q '"type":"system"' "$STREAM"; then
+  echo "" >&2
+  echo "⚠ ccp-watch: WARNING — no system event in stream; ${VENDOR:-claude} likely never started a turn." >&2
+  echo "  stream: $STREAM ($(wc -c < "$STREAM" | tr -d ' ') bytes)" >&2
+  echo "  stderr: $ERR ($(wc -l < "$ERR" | tr -d ' ') lines)" >&2
+  if [[ -s "$ERR" ]]; then
+    echo "  last stderr lines:" >&2
+    tail -5 "$ERR" >&2
+  fi
+fi
+
+echo ""
+echo "▸ done"
