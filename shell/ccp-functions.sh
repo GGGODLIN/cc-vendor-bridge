@@ -942,21 +942,35 @@ ccp-gpt() {
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Priority\ tier\ for\ the\ main\ agent}
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
-    # Codex OAuth backend window re-probed 2026-07-31 by binary search against the relay:
-    # 371,306 accepted / 372,309 rejected — the hard ceiling is 372k, matching Codex
-    # metadata. Model itself is 1.05M via paid API only. Also drives the statusline's
-    # context_window_size (the /context command reports AUTO_COMPACT_WINDOW instead).
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-372000}
-    # Compact fires at min(window, max_context) - min(max_output, 20k) - 13k = 327,000.
-    # CC's own hard block sits at max_context - 23k = 349,000, so the gap is 22,000 —
-    # chosen to clear the largest overshoot across 44 real auto-compacts (21,415; CC
-    # only measures at turn boundaries, so it always fires above the nominal line).
-    # Raising this past 360,585 shrinks the gap below that overshoot; past 372,000 has
-    # no effect at all, since min() clamps it to CLAUDE_CODE_MAX_CONTEXT_TOKENS.
-    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-360000}
+    # OpenAI opened the 1M window to ChatGPT-account Codex on 2026-08-17 (Tibo,
+    # x.com/thsottiaux/status/2089082893804896524 plus the follow-up "just flipped the
+    # switch"). Re-probed the relay the same day by binary search: 921,504 accepted /
+    # ~921,998 rejected, so the backend ceiling is 922,000 = the documented 1,050,000
+    # window minus the fixed 128k output reserve (max_tokens=64 on the probe did not
+    # move it). terra and luna both cleared 492,719; their own ceilings are unprobed.
+    # Codex metadata still reports 272000 and stays untrustworthy.
+    # Value below matches Tibo's recommended Codex config rather than the 922,000
+    # ceiling: usable space is identical either way (compaction governs at 867,000),
+    # the difference is only where CC's local wall lands — 977,000 here, i.e. above the
+    # backend ceiling, so a >55k single-turn injection past the compaction line gets
+    # sent and refused rather than blocked locally. Relay refusals read "Your input
+    # exceeds the context window of this model.", which CC does not recognise as a
+    # too-long error, so there is no retry ladder — recovery is a manual /compact.
+    # Set this to 940000 to move the local wall under the ceiling and close that gap.
+    # Also drives the statusline's context_window_size (/context reports
+    # AUTO_COMPACT_WINDOW instead).
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1000000}
+    # Compact fires at min(window, max_context) - min(max_output, 20k) - 13k = 867,000,
+    # leaving 55,000 to the backend ceiling. CC only measures at turn boundaries, so it
+    # always fires above the nominal line: worst overshoot across 44 real auto-compacts
+    # was 21,415, which lands at 888,415 — clear of 922,000. The residual exposure is a
+    # single turn injecting more than 55,000 at once (3 concurrent tool calls at the
+    # 25,000 MCP cap would reach 75,000).
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-900000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    # Single-shot injection caps for the 372k window: oversized MCP output spills
-    # to a temp file, oversized bash output truncates with a [KB removed] marker.
+    # Single-shot injection caps: oversized MCP output spills to a temp file, oversized
+    # bash output truncates with a [KB removed] marker. These bound the overshoot past
+    # the compaction line, which is what keeps the run clear of the 922,000 ceiling.
     export MAX_MCP_OUTPUT_TOKENS=${MAX_MCP_OUTPUT_TOKENS:-25000}
     export BASH_MAX_OUTPUT_LENGTH=${BASH_MAX_OUTPUT_LENGTH:-30000}
     # Tibo's alias sets false outright; GPT models' deferred-tool handling unverified.
@@ -964,8 +978,8 @@ ccp-gpt() {
     # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
     # Skill(claude-api): the bundled skill injects ~800KB (~200k tokens) when triggered
     # (and it triggers on ANY Claude/LLM mention) — with this env's ~57k baseline that
-    # blew the then-272k window with "Prompt is too long" (session c83482eb, 2026-07-14);
-    # at 372k it still eats >half the window. Fine under fable[1m]; fatal on ~372k models.
+    # blew the then-272k window with "Prompt is too long" (session c83482eb, 2026-07-14).
+    # No longer fatal at 1M, but a 200k single-shot injection is still not worth it.
     # --model flag beats settings.json "model" (user pins claude-fable-5[1m] there,
     # which otherwise silently overrides ANTHROPIC_MODEL and mis-routes on the relay).
     command claude --effort max --model "$ANTHROPIC_MODEL" --disallowed-tools 'WebSearch' 'Skill(claude-api)' "$@"
