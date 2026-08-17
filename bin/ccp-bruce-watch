@@ -3,22 +3,29 @@
 #
 # Monitors /v1/pool/status (no token cost; admin-exposed endpoint). Two metrics:
 #
-# 1. healthPercent — pool capacity (5h quota remaining across 15-account pool).
-#    Verified leading indicator 2026-06-20 (636-sample / 2h9min run):
-#    messages stayed 100% 2xx while health swung 86.67% → 20%. 6.67% step.
-#    Max observed: 86.67% (13/15). Min observed: 20% (3/15). 503 threshold
-#    still empirically unconfirmed.
+# 1. healthPercent — DEAD FIELD as of 2026-08-17, gates disabled by default.
+#    Was pool capacity (5h quota remaining across a 15-account pool) and a verified
+#    leading indicator on 2026-06-20 (636-sample / 2h9min run): messages stayed
+#    100% 2xx while health swung 86.67% → 20%, in 6.67% steps.
+#    Re-probed on api.bruceai.net 2026-08-17: pinned at 0 across three samples while
+#    serviceStability read 99-100 and every /v1/messages call returned 200. Reads as
+#    no-longer-maintained after the move from internal test to paid service, not as an
+#    outage. All three health thresholds therefore default to 0, which disables them
+#    ($v < 0 is never true) — otherwise every probe would fire CRITICAL forever.
+#    Still polled and logged so a revival shows up in the jsonl trend.
+#    Re-enable with e.g. --critical-below 20 if the field ever starts moving again.
 #
 # 2. serviceStabilityPercent — service-layer reliability (NEW 2026-06-28).
 #    Continuous percentage, 100 = all-green. Presumed to track success rate /
 #    inverse of error rate. NO historical calibration yet — thresholds below
 #    are presumptive (≥80 normal / 50-80 wobble / <50 unstable).
+#    This is now the ONLY metric actually gating alerts.
 #
 # Thresholds (each metric tracked independently, fires once on cross-down,
 # recovery fires once when value climbs back above its alert threshold):
-#   --warn-below N           health: yellow only       (default 60)
-#   --alert-below N          health: red + notify      (default 40)
-#   --critical-below N       health: bold red + notify (default 20)
+#   --warn-below N           health: yellow only       (default 0 = disabled)
+#   --alert-below N          health: red + notify      (default 0 = disabled)
+#   --critical-below N       health: bold red + notify (default 0 = disabled)
 #   --stab-warn-below N      stability: yellow only    (default 80)
 #   --stab-alert-below N     stability: red + notify   (default 70)
 #   --stab-critical-below N  stability: bold + notify  (default 50)
@@ -39,13 +46,13 @@ set -uo pipefail
 
 INTERVAL=10
 TIMEOUT=8
-WARN_BELOW=60
-ALERT_BELOW=40
-CRITICAL_BELOW=20
+WARN_BELOW=0
+ALERT_BELOW=0
+CRITICAL_BELOW=0
 STAB_WARN_BELOW=80
 STAB_ALERT_BELOW=70
 STAB_CRITICAL_BELOW=50
-URL="https://bruce-token-proxy-2kjfv3lttq-de.a.run.app/v1/pool/status"
+URL="https://api.bruceai.net/v1/pool/status"
 LOG_DIR="${HOME}/.claude/logs"
 LOG_FILE="${LOG_DIR}/bruce-pool-health.jsonl"
 
@@ -116,9 +123,15 @@ notify() {
   osascript -e "display notification \"$msg\" with title \"$title\" sound name \"Sosumi\"" 2>/dev/null || true
 }
 
-printf '%s[ccp-bruce-watch]%s interval=%ds timeout=%ds · health<%d/%d/%d · stab<%d/%d/%d · log=%s · Ctrl-C to stop\n' \
+if (( WARN_BELOW == 0 && ALERT_BELOW == 0 && CRITICAL_BELOW == 0 )); then
+  HEALTH_GATE_DESC="health gates OFF (field pinned at 0 since 2026-08-17)"
+else
+  HEALTH_GATE_DESC=$(printf 'health<%d/%d/%d' "$WARN_BELOW" "$ALERT_BELOW" "$CRITICAL_BELOW")
+fi
+
+printf '%s[ccp-bruce-watch]%s interval=%ds timeout=%ds · %s · stab<%d/%d/%d · log=%s · Ctrl-C to stop\n' \
   "$C_BOLD" "$C_RESET" "$INTERVAL" "$TIMEOUT" \
-  "$WARN_BELOW" "$ALERT_BELOW" "$CRITICAL_BELOW" \
+  "$HEALTH_GATE_DESC" \
   "$STAB_WARN_BELOW" "$STAB_ALERT_BELOW" "$STAB_CRITICAL_BELOW" \
   "$LOG_FILE"
 

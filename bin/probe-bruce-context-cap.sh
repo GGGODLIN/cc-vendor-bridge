@@ -19,7 +19,7 @@
 set -uo pipefail
 
 : "${BRUCE_API_KEY:?BRUCE_API_KEY not set}"
-URL="https://bruce-token-proxy-431026649525.asia-east1.run.app/v1/messages"
+URL="https://api.bruceai.net/v1/messages"
 
 if [[ $# -eq 0 ]]; then
   sizes=(100 300 350 500 700 900 1100)

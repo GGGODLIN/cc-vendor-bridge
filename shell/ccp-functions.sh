@@ -274,17 +274,27 @@ ccp-mimo-payg() {
   )
 }
 
-# ===== Bruce token proxy (internal test, "GPT-5.5" backend) =====
-# Source: https://hackmd.io/@vTE3u1D4ROSvEVdRv4OW5Q/BJcnidZzfl
-# Probe verified 2026-06-18:
-#   - Anthropic SSE format, backed by OpenAI Responses (resp_* ids)
-#   - /v1/models 404; backend force-routes to "gpt-5.5" regardless of client model
-#   - Auth must be Authorization: Bearer (x-api-key rejected → 401)
-#     → MUST use ANTHROPIC_AUTH_TOKEN (which CC sends as Bearer), NOT ANTHROPIC_API_KEY
-#   - Caller's ANTHROPIC_MODEL / DEFAULT_*_MODEL FORCED off (no ${VAR:-default}):
-#     CC's `claude-opus-*[1m]` alias has internal Anthropic-only routing that bypasses
-#     ANTHROPIC_BASE_URL; if outer shell has any ANTHROPIC_MODEL lingering, leakage
-#     would silently route to api.anthropic.com instead of Bruce.
+# ===== BRUCEAI gateway — GPT-5.6 family, prepaid credits =====
+# Official docs: https://www.bruceai.net/docs/claude-code · pricing: /pricing
+# Rebuilt 2026-08-17 against api.bruceai.net. The internal-test Cloud Run hosts
+# (bruce-token-proxy-431026649525.asia-east1 / -2kjfv3lttq-de.a.run.app) still answer
+# and share the same backend and balance, but api.bruceai.net is the documented one.
+# Every claim in the old comment block was re-probed and most had expired:
+#   - /v1/models: was 404, now 200 listing sol / terra / luna / 5.5 / 5.4 / 5.4-mini
+#     / codex-auto-review
+#   - routing: was "force-routed to gpt-5.5 whatever the client asks", now genuinely
+#     per-id. Same prompt: sol 13.1s/598tok · terra 6.3s/263 · luna 8.3s/312 ·
+#     5.4-mini 30.0s/1982 — four distinct behaviours, so the slot mapping below is real
+#   - prompt cache: works and is free to write. A repeated 27,603-token prefix came back
+#     cache_read=27,392 / cache_creation=0 (OpenAI-style implicit caching), so the
+#     "cache write" column in the price table never actually fires
+#   - WebSearch: was silent fabrication, now real — see the --append-system-prompt note
+# Auth is the one thing unchanged: Bearer only, so ANTHROPIC_AUTH_TOKEN and never
+# ANTHROPIC_API_KEY (x-api-key → 401).
+#
+# Per-call override:
+#   ANTHROPIC_MODEL=gpt-5.6-terra ccp-bruce        # different main model
+#   CCP_BRUCE_EFFORT=max ccp-bruce                 # deeper reasoning, costs more output
 ccp-bruce() {
   if [[ -z "$BRUCE_API_KEY" ]]; then
     echo "ccp-bruce: BRUCE_API_KEY not set. See shell/secrets.example" >&2
@@ -292,69 +302,112 @@ ccp-bruce() {
   fi
   (
     export CC_VENDOR=bruce
-    export ANTHROPIC_BASE_URL=https://bruce-token-proxy-431026649525.asia-east1.run.app
+    export ANTHROPIC_BASE_URL=https://api.bruceai.net
     export ANTHROPIC_AUTH_TOKEN=$BRUCE_API_KEY
-    unset ANTHROPIC_API_KEY  # HackMD warns: must use AUTH_TOKEN, NOT API_KEY
-    # Force model pins — intentionally NOT using ${VAR:-default} to neutralize
-    # any outer ANTHROPIC_MODEL=claude-opus-4-7[1m] that would route to Anthropic.
-    export ANTHROPIC_MODEL=gpt-5.5
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5.5
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.5
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.5
-    export CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.5
+    unset ANTHROPIC_API_KEY  # Bruce docs: must use AUTH_TOKEN, NOT API_KEY
+    # Per-call model override is supported, but a stray claude-* value from the outer
+    # shell must not survive: CC's claude-* aliases carry Anthropic-only routing that
+    # bypasses ANTHROPIC_BASE_URL, so the session would silently bill Anthropic instead
+    # of Bruce. Drop it rather than force-pinning, which would kill the override too.
+    if [[ "${ANTHROPIC_MODEL:-}" == claude-* ]]; then
+      print -P "%F{yellow}[ccp-bruce] 忽略外層 ANTHROPIC_MODEL=${ANTHROPIC_MODEL}（claude-* 會繞過 Bruce 直接計費到 Anthropic）%f" >&2
+      unset ANTHROPIC_MODEL
+    fi
+    # Slot mapping mirrors ccp-gpt: flagship for judgement, cheap tier for the rest.
+    # Terra is skipped for the same reason ccp-gpt dropped it — it sits in the middle
+    # being neither. 5.4-mini is cheaper than luna (0.75 vs 1.00 credits/M input) but
+    # probes badly: 30.0s and 1,982 output tokens on a prompt luna answered in 8.3s
+    # with 312, so it loses on total cost anyway.
+    # NOTE the effort suffix ccp-gpt uses — `gpt-5.6-luna(max)` — is CLIProxyAPI syntax.
+    # Bruce rejects it: 400 `Model "requested model(max)" is not supported`. Effort
+    # travels in output_config instead, via the --effort flag below.
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-5.6-sol}
+    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-5.6-sol}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-sol}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-luna}
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna}
+    # Deliberately NOT setting CLAUDE_CODE_SUBAGENT_MODEL: leaving it unset lets the
+    # slot mapping do the routing, so ~/.claude/agents/routed-*.md land where the policy
+    # says (routed-impl/judge/secure = opus → sol, routed-mech = sonnet → luna).
+    # Effort is a real knob here — same reasoning prompt ran 9.2s/384 tokens at low
+    # versus 20.5s/1042 at max. ccp-gpt pins max because Codex OAuth is a subscription;
+    # Bruce bills per token, so max costs ~2.7x the output. high is the default trade.
+    export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
+    # Context: the hard ceiling probed between 824,850 (accepted) and ~900,000
+    # (rejected with 「內容已達模型上限，請執行 /compact 後繼續。」), so the docs' 1.05M
+    # is not actually reachable. It barely matters, because the binding limit is
+    # commercial, not technical: once input + cache reads pass 272,000 the WHOLE request
+    # is rebilled at the long-context rate (input x2, output x1.5). So the window is
+    # pinned at that cliff and auto-compact is left ON to stay under it.
+    # Compact fires at min(window, max_context) - min(max_output, 20k) - 13k = 217,000.
+    # CC only measures at turn boundaries and overshoots — worst observed on ccp-gpt
+    # across 44 real auto-compacts was 21,415 — which lands ~238,415, leaving ~33K of
+    # headroom for concurrent tool injections before the cliff.
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-272000}
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-250000}
+    # Single-shot injection caps, tightened from ccp-gpt's 25000/30000: a 272K window
+    # cannot absorb what a 1M window shrugs off. Three concurrent MCP calls at 12000
+    # is 36,000, which the headroom above just covers.
+    export MAX_MCP_OUTPUT_TOKENS=${MAX_MCP_OUTPUT_TOKENS:-12000}
+    export BASH_MAX_OUTPUT_LENGTH=${BASH_MAX_OUTPUT_LENGTH:-20000}
+    export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    # Deferred tool loading. Was FORCEd off pre-2026-06-19 because Bruce proxy
-    # rejected `tool_reference` content blocks with 400 messages.X.content Invalid
-    # (36/36 subagent kill rate in devspace-pr-review-eval workflow). Admin
-    # confirmed fix 2026-06-19; bin/probe-bruce-tool-reference.sh passes (200).
-    # Restored to default auto — recovers ~30-100K tokens of system-prompt budget.
+    # Deferred tool loading. Was forced off pre-2026-06-19 when Bruce rejected
+    # `tool_reference` content blocks with 400 (36/41 subagents killed in the
+    # devspace-pr-review-eval workflow); re-probed 200 on api.bruceai.net 2026-08-17.
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    # Match ccp-deepseek / ccp-mimo convention — disable client-side auto-compact.
-    # Backend ctx lifted to 1M 2026-06-19 (admin confirmed; user re-probed pass).
-    export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1000000}
-    # C-1 harness: --append-system-prompt propagates to every Task-tool subagent +
-    # nested subagents + workflow agents (gate documented in CC binary, verified
-    # 2026-06-19). Tiny system prompt below to keep propagation cheap.
     export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1
-    # --disallowed-tools WebSearch — HARD safety. The 2026-06-19 fix to issue 2
-    # (proxy now accepts web_search_20250305 schema) regressed into SILENT
-    # FABRICATION: proxy returns 200 + tool_result body with fake citations
-    # dressed in Anthropic's "REMINDER: You MUST include the sources above..."
-    # injection. Verified session 580f03bc (3/3 prompts), model dutifully quoted
-    # fabricated URLs / dates. Worse than the original 400 because the failure
-    # is invisible to client + user. Keep disabled until proxy implements a real
-    # search backend (e.g. Bocha, like DeepSeek's /anthropic does) OR returns
-    # honest is_error tool_result. See docs/caveats.md §13b.
-    # --model CLI flag has highest precedence (above settings.json + ANTHROPIC_MODEL env);
-    # without it settings.json "model":"claude-opus-4-7[1m]" overrides env force-pin
-    # and CC TUI displays the wrong model (API still routes to Bruce).
-    claude --model gpt-5.5 \
-      --disallowed-tools WebSearch \
-      --append-system-prompt "WebSearch is disabled on this vendor (Bruce proxy returns fabricated SERP results — verified 2026-06-19 session 580f03bc). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no Bruce token cost). Pass --json flag for raw JSON if you need to parse fields. IMPORTANT: When dispatching Task subagents or workflow agents that may need web search, you MUST include this verbatim instruction in their prompt: 'For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\"' — subagents do not auto-inherit this nudge (session 2650cf5f verified: subagent fell back to DuckDuckGo/Bing/Google HTML scraping)." \
+    # WebSearch is ENABLED again as of 2026-08-17. The 2026-06-19 verdict (session
+    # 580f03bc, "silent fabrication", 3/3 prompts) no longer reproduces. Controlled
+    # re-probe used a fact that cannot exist in any training set — the claude-code
+    # release tag published three days earlier:
+    #   with the web_search tool offered  → "v2.1.233 — August 14, 2026" + correct
+    #                                        release URL, input_tokens 21,081
+    #   with no tools offered             → "UNKNOWN", input_tokens 162
+    #   no tools, luna                    → "UNKNOWN"
+    # It only searches when CC actually offers the tool, and it declines to guess when
+    # it cannot. Caveat: the reply carries no `web_search_tool_result` block (content is
+    # just thinking + text), so CC's citation UI stays dark — the URLs land in prose.
+    # The real cost is context, not accuracy: ~21K tokens injected per search against a
+    # 272K window, hence the exa-first nudge below.
+    # Skill(claude-api) stays blocked — it injects ~800KB (~200k tokens) on any Claude
+    # or LLM mention, which would blow this window outright (ccp-gpt hit that at 272k
+    # in session c83482eb, 2026-07-14).
+    # --model CLI flag outranks settings.json, whose "model" pin would otherwise
+    # override the env mapping and mis-route the session.
+    claude --effort "${CCP_BRUCE_EFFORT:-high}" \
+      --model "$ANTHROPIC_MODEL" \
+      --disallowed-tools 'Skill(claude-api)' \
+      --append-system-prompt "This vendor bills per token against a prepaid balance, and the context window is pinned at 272,000 because crossing that line rebills the entire request at double the input rate. Budget context deliberately. WebSearch works here and returns real results, but each call injects roughly 21,000 tokens of search output — about 8% of the whole window. For lightweight factual lookups prefer the Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — top 5 results with LLM-ready highlights from Exa neural search, free tier, zero Bruce token cost, and a fraction of the context. Pass --json for raw fields. Reserve WebSearch for cases that genuinely need live page content or where exa comes back empty. IMPORTANT: when dispatching Task subagents or workflow agents, include this guidance verbatim in their prompt — subagents were verified not to inherit it (session 2650cf5f: a subagent fell back to scraping DuckDuckGo/Bing/Google HTML)." \
       "$@"
   )
 }
 
-# ===== Bruce one-shot status snapshot (quota + pool health + service stability) =====
-#合併三條 curl-系查詢：
-#   /v1/usage/quota   →  consumed / remaining USD                (per-key billing)
-#   /v1/pool/status   →  healthPercent + serviceStabilityPercent (admin endpoints)
+# ===== Bruce one-shot status snapshot (balance + service stability) =====
+# 兩條 curl（都不花 token）：
+#   /v1/usage       →  預付額度餘額（= /v1/usage/balance，同一份 payload）
+#   /v1/pool/status →  healthPercent + serviceStabilityPercent
 #
-# healthPercent (2026-06-20 calibrated leading indicator)
-#   pool 容量 — 15-account pool 還有多少 5h quota 沒被吃掉，6.67% step。
-#   < 20% = pool 接近耗盡、imminent 503 風險。
+# ⚠️ 2026-08-17 換過來源：舊的 /v1/usage/quota 已經壞了 — 5 次採樣 4 次空 body、
+#    1 次 500 Internal server error。改讀 /v1/usage，欄位是
+#    {total, used, remaining, balance, planName, is_active}。
 #
-# serviceStabilityPercent (新增 2026-06-28，無 historic calibration)
-#   服務層可用性（推測為 success rate / 反向 error rate），連續百分比、100=全綠。
-#   推測門檻（待 trend 累積資料校準）：
-#     ≥ 80%: 正常
-#     50-80: 服務有波動，可能 upstream provider 部分異常
-#     < 50%: 服務嚴重不穩、建議 pause 大量工作 workflow
+# 額度換算：官方定價頁寫 每 US$1 = 21 額度。API 的 "unit":"USD" 名不副實，
+#    數字其實是額度，所以下面自己除以 21 換回美金給人看。
+#
+# serviceStabilityPercent
+#   服務層可用性，連續百分比、100 = 全綠。門檻仍是推測值（2026-06-28 起未校準）：
+#     ≥ 80%: 正常 / 50-80: 有波動 / < 50: 建議 pause 大量工作 workflow
+#
+# ⚠️ healthPercent 已失效（2026-08-17 實測）
+#   舊語意是 15-account pool 的剩餘容量、6.67% 一階、< 20% 代表接近耗盡。
+#   現在恆為 0：三次採樣皆 0，同期 serviceStability 99-100、所有 /v1/messages 全 200。
+#   轉正式營運後應該已不再維護此欄位。顯示保留供觀察，但不再當判斷依據，
+#   ccp-bruce-watch 與 /bruce-workflow-monitor 的 health gate 都已預設關閉。
 #
 # Usage:
 #   ccp-bruce-status              # human-readable snapshot
-#   ccp-bruce-status --json       # merged raw JSON ({quota, pool})
+#   ccp-bruce-status --json       # merged raw JSON ({usage, pool})
 ccp-bruce-status() {
   if [[ -z "$BRUCE_API_KEY" ]]; then
     echo "ccp-bruce-status: BRUCE_API_KEY not set. See shell/secrets.example" >&2
@@ -371,12 +424,12 @@ ccp-bruce-status() {
     raw=1
   fi
 
-  local base="https://bruce-token-proxy-2kjfv3lttq-de.a.run.app"
-  local quota pool
-  if ! quota=$(curl -fsS -m 10 \
+  local base="https://api.bruceai.net"
+  local usage pool
+  if ! usage=$(curl -fsS -m 10 \
     -H "Authorization: Bearer $BRUCE_API_KEY" \
-    "$base/v1/usage/quota"); then
-    echo "ccp-bruce-status: /v1/usage/quota request failed" >&2
+    "$base/v1/usage"); then
+    echo "ccp-bruce-status: /v1/usage request failed" >&2
     return 1
   fi
   if ! pool=$(curl -fsS -m 10 \
@@ -387,25 +440,26 @@ ccp-bruce-status() {
   fi
 
   if [[ "$raw" == 1 ]]; then
-    jq -n --argjson quota "$quota" --argjson pool "$pool" '{quota: $quota, pool: $pool}'
+    jq -n --argjson usage "$usage" --argjson pool "$pool" '{usage: $usage, pool: $pool}'
     return
   fi
 
   jq -nr \
-    --argjson quota "$quota" \
+    --argjson usage "$usage" \
     --argjson pool "$pool" \
     '
-    ($quota.consumedUsd // 0) as $c
-    | ($quota.remainingUsd) as $r
+    (21) as $perUsd
+    | ($usage.used // 0) as $u
+    | ($usage.total // 0) as $t
+    | ($usage.remaining // $usage.balance // 0) as $r
     | ($pool.healthPercent // null) as $h
     | ($pool.serviceStabilityPercent // null) as $s
-    | (if $r == null then "unlimited" else "$\($r * 100 | round / 100)" end) as $rStr
-    | (if $r == null then "unlimited" else "$\(($c + $r) * 100 | round / 100)" end) as $tStr
-    | (if $r == null or ($c + $r) <= 0 then "n/a" else "\($c / ($c + $r) * 1000 | round / 10)%" end) as $pctStr
+    | (if $t > 0 then "\($r / $t * 1000 | round / 10)%" else "n/a" end) as $pctStr
     | "[ccp-bruce-status]\n"
-      + "quota   consumed=$\($c * 100 | round / 100) / total=\($tStr)   used=\($pctStr)   remaining=\($rStr)\n"
-      + "pool    healthPercent=\($h // "?")%   (15-acct pool capacity, 6.67% step, leading indicator for 503)\n"
-      + "service serviceStabilityPercent=\($s // "?")%   (service-layer reliability, 100=all-green; thresholds推測 ≥80 normal / 50-80 wobble / <50 unstable)"
+      + "credits used=\($u * 100 | round / 100) / total=\($t * 100 | round / 100)   remaining=\($r * 100 | round / 100) (\($pctStr))   ≈ US$\($r / $perUsd * 100 | round / 100) left   [21 credits = US$1]\n"
+      + "plan    \($usage.planName // "?")   active=\($usage.is_active // "?")\n"
+      + "service serviceStabilityPercent=\($s // "?")%   (100=all-green; 門檻推測 ≥80 normal / 50-80 wobble / <50 unstable)\n"
+      + "pool    healthPercent=\($h // "?")%   ⚠️ 此欄位 2026-08-17 起恆為 0、已不可用作判斷"
     '
 }
 
@@ -437,10 +491,12 @@ ccp-bruce-watch() {
 # Prerequisite (one-time): ~/.codex/config.toml must contain
 #   [model_providers.bruce]
 #   name = "Bruce"
-#   base_url = "https://bruce-token-proxy-431026649525.asia-east1.run.app/v1"
+#   base_url = "https://api.bruceai.net/v1"
 #   wire_api = "responses"
 #   env_key = "BRUCE_API_KEY"
-# Setup done 2026-06-19.
+# Setup done 2026-06-19; base_url re-pointed at api.bruceai.net 2026-08-17.
+# NOTE the Codex side DOES need the /v1 suffix — the Anthropic side (ccp-bruce)
+# must NOT have it. Bruce documents them separately, and mixing them up 404s.
 #
 # Usage:
 #   codex-bruce                              # interactive via bruce
@@ -456,8 +512,10 @@ ccp-bruce-watch() {
 #   - Native `codex review` subcommand walks the SAME review subagent the plugin
 #     uses via `runAppServerReview` (OpenAI-tuned prompt, calibration preserved).
 #     Going through `codex review --base main` via codex-bruce thus keeps quality.
-#   - Bruce backend force-routes everything to gpt-5.5 regardless of -c model=...
-#     so `model = "gpt-5.5"` in config.toml is consistent across openai/bruce.
+#   - Model routing is now per-id, NOT force-routed to gpt-5.5 as it was under the
+#     internal-test proxy (re-probed 2026-08-17). Pick explicitly with
+#     `-c model=gpt-5.6-sol`, or in the Codex TUI via /model. Supported ids:
+#     gpt-5.6-sol / -terra / -luna / gpt-5.5 / gpt-5.4 / gpt-5.4-mini.
 codex-bruce() {
   if [[ -z "$BRUCE_API_KEY" ]]; then
     echo "codex-bruce: BRUCE_API_KEY not set. See shell/secrets.example" >&2
@@ -1144,7 +1202,11 @@ Available cc-vendor-bridge functions:
   ccp-glm           → Zhipu GLM-5.1 / 4.7-Flash (z.ai intl)
   ccp-mimo          → Xiaomi MiMo V2.5-Pro Token Plan (Singapore subscription)
   ccp-mimo-payg     → Xiaomi MiMo V2.5-Pro (intl PAYG)
-  ccp-bruce         → Bruce token proxy (internal test, "GPT-5.5" backend; force-routed)
+  ccp-bruce         → BRUCEAI gateway api.bruceai.net, prepaid credits, GPT-5.6 slot mapping
+                      (OPUS+FABLE→sol / SONNET+HAIKU→luna, --effort high, 272K window)
+                      Context pinned at the 272K billing cliff: past it the whole request
+                      is rebilled at 2x input / 1.5x output. Override: ANTHROPIC_MODEL=... /
+                      CCP_BRUCE_EFFORT=max
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
@@ -1175,10 +1237,13 @@ Available cc-vendor-bridge functions:
   ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
                       (workaround caveat 11: 跨 vendor resume 會炸 thinking signature)
 
-  ccp-bruce-status  → Bruce 三件事 snapshot (quota + pool health + service stability)
-                      取代舊 ccp-bruce-quota / ccp-bruce-usage 的日常使用 (--json 印合併原始)
-  ccp-bruce-watch   → Bruce 長期守護 watcher (healthPercent + serviceStabilityPercent 雙 metric
-                      threshold 觸發，jsonl log 落檔，macOS notification)
+  ccp-bruce-status  → Bruce snapshot：預付額度餘額 (/v1/usage) + service stability
+                      額度換算 21 credits = US\$1；(--json 印合併原始)
+                      ⚠️ 舊的 /v1/usage/quota 已壞（空 body / 500），已改讀 /v1/usage
+  ccp-bruce-watch   → Bruce 長期守護 watcher (serviceStabilityPercent 單 metric threshold
+                      觸發，jsonl log 落檔，macOS notification)
+                      ⚠️ healthPercent 2026-08-17 起恆為 0、gate 已預設關閉；
+                      要重啟用：--critical-below 20 之類明確給值
 
 Disabled (API key not configured):
   ccp-kimi / ccp-kimi-cn / ccp-glm-cn / ccp-qwen / ccp-qwen-coding

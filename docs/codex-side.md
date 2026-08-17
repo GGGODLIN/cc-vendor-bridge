@@ -30,7 +30,7 @@ Status 2026-06-19：Path 0 設置完成、smoke 待驗。
 
 ## Bruce 後端兩條 ingress 共存（2026-06-19 實證）
 
-Bruce token proxy（`https://bruce-token-proxy-431026649525.asia-east1.run.app`）同時暴露兩條 client-facing endpoint：
+BRUCEAI（`https://api.bruceai.net`，2026-08-17 從內測 host `bruce-token-proxy-431026649525.asia-east1.run.app` 遷來；舊 host 仍可用、同後端同餘額）同時暴露兩條 client-facing endpoint：
 
 | Ingress | Path | Wire | 給誰用 | Verified |
 |---|---|---|---|---|
@@ -48,10 +48,12 @@ cc-vendor-bridge/docs/caveats.md §13 原本只描述 Anthropic ingress（"Anthr
 ```toml
 [model_providers.bruce]
 name = "Bruce"
-base_url = "https://bruce-token-proxy-431026649525.asia-east1.run.app/v1"
+base_url = "https://api.bruceai.net/v1"
 wire_api = "responses"
 env_key = "BRUCE_API_KEY"
 ```
+
+> ⚠️ `/v1` 只有 Codex 側要帶。Anthropic 側（`ccp-bruce` 的 `ANTHROPIC_BASE_URL`）不能帶，官方 doc 兩邊分開寫明。
 
 **不動 default `model_provider`**（保持隱式 = 內建 `openai` provider，走 ChatGPT OAuth）。Backup 在 `~/.codex/config.toml.bak`。
 

@@ -14,7 +14,7 @@
 
 set -uo pipefail
 : "${BRUCE_API_KEY:?BRUCE_API_KEY not set}"
-URL="https://bruce-token-proxy-431026649525.asia-east1.run.app/v1/messages"
+URL="https://api.bruceai.net/v1/messages"
 
 salt="$(date +%s%N)-$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 12)"
 payloadfile=$(mktemp /tmp/bruce-ws-payload.XXXX)

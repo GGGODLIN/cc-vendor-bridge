@@ -315,6 +315,8 @@ curl --raw -sS -D - -o /tmp/b.bin \
 
 Bruce token proxy (`https://bruce-token-proxy-431026649525.asia-east1.run.app`) HackMD doc 宣稱接 GPT-5.5。2026-06-19 一輪完整 probe 拆出三條 caveat（context cap、WebSearch、tool_reference），管理員當日修了；修後行為見下方各段註記。
 
+> 📍 **2026-08-17 遷站**：正式端點已是 `https://api.bruceai.net`（官方 doc <https://www.bruceai.net/docs/claude-code>）。上面兩個內測 Cloud Run host 仍然回應、且與新站共用同一後端與同一份餘額，但所有設定已改指新站。本節以下的歷史敘述保留當時的 host 名稱不動；**現況結論**一律以各段的 2026-08-17 註記為準——尤其模型路由（已改為 per-id、不再 force-route gpt-5.5）與 WebSearch（已改為真實搜尋）兩條，舊結論皆已推翻。
+
 #### 13a. ~~Fake-label：標 gpt-5.5 但 context cap 256K~~ [RESOLVED 2026-06-19]
 
 **原症狀：** 標 gpt-5.5 但 context cap ~256K，跟 gpt-5o (256K) 高度吻合。對照 OpenAI 官方 GPT-5.5 應為 1,050,000 token context。
@@ -344,29 +346,46 @@ Bruce token proxy (`https://bruce-token-proxy-431026649525.asia-east1.run.app`) 
 | **Kimi** `api.moonshot.ai/anthropic` | ❌ 推測 reject | 原生 `$web_search` 走 OpenAI 路徑，Anthropic 端點未實作 | 結構類比，未實測 |
 | **Qwen** `dashscope-intl.aliyuncs.com/apps/anthropic` | ❓ 未實測 | docs 無 mention，推測 silent drop | 未實測 |
 | **Doubao** `ark.cn-beijing.volces.com/api/coding` | ❓ 未實測 | docs 無 mention，Ark 原生搜尋是另一條 plugin | 未實測 |
-| **Bruce** | ✅ 接受 + **偽造搜尋結果** ❌❌❌ | 修前 400 schema reject；2026-06-19 admin 修後**退化成 silent fabrication** | session 580f03bc 3/3 prompt 全踩、偽造 URL + 日期 |
+| **Bruce** | ✅ 接受 + **真實搜尋**（2026-08-17 翻案） | 三階段演變：400 schema reject → 2026-06-19 admin 修後 silent fabrication → 2026-08-17 遷 api.bruceai.net 後實測為真實上游搜尋 | 對照實驗見下方「Bruce 專屬」段（訓練資料外事實、三組對照） |
 
-**結論**：DeepSeek 是「proxy 該如何處置 Anthropic native WebSearch」的範本，背靠 Bocha 做 interception。其他 CN vendor 多數誠實 reject（CC 看得到錯、可 fallback）。**Bruce 修後行為唯一危險**——透明從 transport 層注入偽造、CC 視為成功 turn、模型誠實引用假來源。
+**結論**：DeepSeek 是「proxy 該如何處置 Anthropic native WebSearch」的範本，背靠 Bocha 做 interception。其他 CN vendor 多數誠實 reject（CC 看得到錯、可 fallback）。**Bruce 已從最危險的一格移出**——2026-06-19 那版透明注入偽造、CC 視為成功 turn、模型誠實引用假來源；2026-08-17 重驗已改成走上游 OpenAI 內建搜尋，答案可驗證為真。唯一殘留的落差是它不回 Anthropic 規格的 `web_search_tool_result` block，CC 的 citation UI 因此不亮。
 
 ##### WebSearch (`web_search_20250305`) — Bruce 專屬
 
-**修前症狀：**
+三個階段，第三階段推翻前兩個：
+
+**階段 1（修前）：**
 ```
 400 tools.0.input_schema: Invalid input: expected record, received ...
 ```
 
-**2026-06-19 admin 修後症狀：** 200 OK + tool_result body 含**偽造**搜尋結果 + 模仿 Anthropic 原生 `REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks` 注入。Failure mode 從 honest 4xx 退化成 silent fabrication，比原本嚴重。
+**階段 2（2026-06-19 admin 修後）：** 200 OK + tool_result body 含**偽造**搜尋結果 + 模仿 Anthropic 原生 `REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks` 注入。Failure mode 從 honest 4xx 退化成 silent fabrication，比原本嚴重。
 
 實證 session 580f03bc：
-- query: `Claude Opus 4.8 release date` → tool_result 偽造 `2026-05-28 + https://www.anthropic.com/news/claude-opus-4-8` → 模型篤定引用
+- query: `Claude Opus 4.8 release date` → tool_result 判為偽造 `2026-05-28 + https://www.anthropic.com/news/claude-opus-4-8` → 模型篤定引用
 - query: `Anthropic 降價公告` → tool_result 列 5 條**真實但語意不符**的舊文章（Claude 2.1 / prompt-caching / Opus 4.5 / pricing docs）→ 模型挑了 Opus 4.5 release URL 假裝是降價公告
 - query: `Next.js 15 release date` → tool_result 偽造，**但因 gpt-5.5 訓練資料命中 Next.js 15 真實資訊**，URL + 日期碰巧對
 
-**Workaround（ccp-bruce 245-282）：**
-1. `--disallowed-tools WebSearch` — 硬擋 tool 不出現在 model schema（驗 2026-06-19 session 092a4fce 1 turn 即回「WebSearch unavailable」）
-2. `--append-system-prompt` 提示走 `mcp__chrome-devtools__new_page` + `mcp__chrome-devtools__take_snapshot` 取代
+**階段 3（2026-08-17，遷 api.bruceai.net 後重驗）— 已是真實搜尋，WebSearch 解禁。**
 
-**未來修 proxy 路徑（DeepSeek 已實作參考）：** 真實接後端搜尋（Bocha 是 CN 業界 default，¥3.6/1k，有官方 MCP `github.com/BochaAI/bocha-search-mcp`），或誠實回 `tool_result(is_error=true, content="WebSearch backend not available on this proxy")` 讓 CC 看得到錯。**退回原本的 400 schema reject 也好過現在偽造**。
+重驗設計刻意避開階段 2 的判定弱點：用**訓練資料裡不可能存在**的事實當考題（`anthropics/claude-code` 三天前發布的 release tag，ground truth 由 `gh api` 取得＝ v2.1.233 / 2026-08-14），並加不給 tool 的對照組：
+
+| 組別 | 條件 | 回答 | input_tokens |
+|---|---|---|---|
+| A | 給 `web_search_20250305` | **v2.1.233 — August 14, 2026** + 正確 release URL ✅ | 21,081 |
+| B | 完全不給 tool | `UNKNOWN` | 162 |
+| C | 不給 tool、換 luna | `UNKNOWN` | — |
+
+三個推論：
+1. **答案為真**且無法由記憶產生 → 確實有即時搜尋發生
+2. **只在 CC 送出 tool 時才搜**；不給 tool 時它誠實回 UNKNOWN、不瞎編 → 階段 2 最危險的那個 failure mode 不再重現
+3. A 組多出的約 21K input tokens ＝ 真實搜尋結果被注入 context
+
+另外回頭補驗階段 2 的第一條：`https://www.anthropic.com/news/claude-opus-4-8` **確實存在**（標題 "Introducing Claude Opus 4.8"）。當時判為「偽造 URL」的部分至少在這一條上過嚴，真正站得住的偽造證據是第二條的語意錯配。
+
+**殘留落差（非阻斷）：** 回應的 content block 只有 `thinking` + `text`，沒有 Anthropic 規格的 `server_tool_use` / `web_search_tool_result`。CC 的來源引用 UI 因此不會亮，URL 只出現在正文。
+
+**現行設定（ccp-bruce）：** WebSearch 已解禁，改用 `--append-system-prompt` 做**成本**引導而非能力封鎖 — 272K 窗下每次搜尋吃掉約 21K（8%），所以輕量事實查詢優先走 `bin/exa-search.sh`，WebSearch 留給真的需要即時網頁內容的場合。
 
 ##### ToolSearch tool_result `tool_reference` block — [RESOLVED 2026-06-19]
 
