@@ -717,9 +717,9 @@ ccp-relay() {
 # 2026-07-12) plus community fixes from the same thread. Tier mapping per OpenAI's
 # official positioning (Sol=flagship, Terra=balanced default, Luna=fast/cheap):
 #   OPUS→gpt-5.6-sol  SONNET→gpt-5.6-terra  HAIKU→gpt-5.6-luna
-# Context pinned to 372k = measured Codex OAuth backend cap (2026-07-15 relay probe:
-# 364k accepted / ~400k rejected; model spec is 1.05M via paid API only, and 272k in
-# Tibo's recipe is the long-context pricing threshold, not a limit). Both overridable.
+# Context pinned to 1M since 2026-08-17, when OpenAI opened the 1.05M window to
+# ChatGPT accounts; measured backend cap is 922,000 (see the probe notes at the
+# CLAUDE_CODE_MAX_CONTEXT_TOKENS export below). Both overridable.
 # Per-call override:
 #   ANTHROPIC_MODEL='gpt-5.6-sol(high)' ccp-gpt        # effort suffix works
 #   CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol ccp-gpt     # explicitly override routing
