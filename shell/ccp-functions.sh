@@ -1015,7 +1015,7 @@ ccp-gpt-fast() {
 # Context window: 1,048,576 hard cap, stated verbatim by the upstream reject
 # ("exceeds the maximum number of tokens allowed 1048576") and confirmed by probe
 # (1,045,010 accepted / above it rejected). Same ceiling on Pro and Flash. That is
-# 2.8x the 372k Codex ceiling, so Skill(claude-api) is NOT blocked here.
+# still above the 922k Codex ceiling (2026-08-17), so Skill(claude-api) is NOT blocked here.
 #
 # Per-call override:
 #   ANTHROPIC_MODEL='gemini-pro-agent(xhigh)' ccp-gemini-pro
@@ -1144,7 +1144,7 @@ Available cc-vendor-bridge functions:
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
   ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (OPUS→sol / SONNET→terra /
                       HAIKU→luna / subagent routing preserved), Tibo-recipe env vars (effort on,
-                      concurrency 3, 372k context, tool search off)
+                      concurrency 3, 1M context, tool search off)
   ccp-gpt-fast      → Same routing and context as ccp-gpt; priority service tier for all GPT-5.6 requests
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
