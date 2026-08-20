@@ -330,7 +330,7 @@ ccp-bruce() {
     # slot mapping do the routing, so ~/.claude/agents/routed-*.md land where the policy
     # says (routed-impl/judge/secure = opus → sol, routed-mech = sonnet → luna).
     # Effort is a real knob here — same reasoning prompt ran 9.2s/384 tokens at low
-    # versus 20.5s/1042 at max. ccp-gpt pins max because Codex OAuth is a subscription;
+    # versus 20.5s/1042 at max. ccp-gpt pins xhigh for Sol because Codex OAuth is a subscription;
     # Bruce bills per token, so max costs ~2.7x the output. high is the default trade.
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
     # Context: the hard ceiling probed between 824,850 (accepted) and ~900,000
@@ -1049,7 +1049,7 @@ ccp-gpt() {
     # No longer fatal at 1M, but a 200k single-shot injection is still not worth it.
     # --model flag beats settings.json "model" (user pins claude-fable-5[1m] there,
     # which otherwise silently overrides ANTHROPIC_MODEL and mis-routes on the relay).
-    command claude --effort max --model "$ANTHROPIC_MODEL" --disallowed-tools 'WebSearch' 'Skill(claude-api)' "$@"
+    command claude --effort xhigh --model "$ANTHROPIC_MODEL" --disallowed-tools 'WebSearch' 'Skill(claude-api)' "$@"
   )
 }
 
@@ -1214,7 +1214,7 @@ Available cc-vendor-bridge functions:
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
   ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (FABLE→sol / OPUS+SONNET+HAIKU→luna(max),
-                      effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
+                      Sol effort xhigh / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
   ccp-gpt-fast      → Same routing and context as ccp-gpt; priority service tier for all GPT-5.6 requests
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead

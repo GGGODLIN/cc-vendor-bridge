@@ -60,9 +60,9 @@ assert_not_contains \
   "ultracode"
 
 assert_contains \
-  "ccp-gpt defaults to max effort" \
+  "ccp-gpt defaults Sol to xhigh effort" \
   "${functions[ccp-gpt]}" \
-  "command claude --effort max"
+  "command claude --effort xhigh"
 
 assert_contains \
   "ccp-gpt maps Opus to Luna at max effort" \
