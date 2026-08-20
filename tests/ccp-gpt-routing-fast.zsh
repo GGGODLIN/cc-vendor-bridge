@@ -65,6 +65,11 @@ assert_contains \
   "command claude --effort max"
 
 assert_contains \
+  "ccp-gpt maps Opus to Luna at max effort" \
+  "${functions[ccp-gpt]}" \
+  'ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-luna(max)}"'
+
+assert_contains \
   "ccp-gpt exposes the Fast main-model option" \
   "${functions[ccp-gpt]}" \
   "ANTHROPIC_CUSTOM_MODEL_OPTION="

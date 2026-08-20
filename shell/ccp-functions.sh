@@ -774,7 +774,7 @@ ccp-relay() {
 # Recipe from OpenAI Codex lead Tibo Sottiaux (x.com/thsottiaux/status/2076119366647894371,
 # 2026-07-12) plus community fixes from the same thread. Tier mapping per OpenAI's
 # official positioning (Sol=flagship, Terra=balanced default, Luna=fast/cheap):
-#   OPUS→gpt-5.6-sol  SONNET→gpt-5.6-luna(max)  HAIKU→gpt-5.6-luna(max)
+#   FABLE→gpt-5.6-sol  OPUS/SONNET/HAIKU→gpt-5.6-luna(max)
 # Terra dropped from the mapping 2026-08-17 (only Sol and Luna justify their price).
 # Context pinned to 1M since 2026-08-17, when OpenAI opened the 1.05M window to
 # ChatGPT accounts; measured backend cap is 922,000 (see the probe notes at the
@@ -993,8 +993,8 @@ ccp-gpt() {
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-5.6-sol}
     export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-5.6-sol}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-sol}
-    # SONNET/HAIKU both land on Luna at pinned max effort (2026-08-17). Terra is retired
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-luna(max)}"
+    # OPUS/SONNET/HAIKU land on Luna at pinned max effort. Terra is retired
     # from the mapping: in practice only Sol and Luna earn their price, and Terra sat in
     # the middle being neither. The `(model)(effort)` suffix is parsed by the relay and
     # overrides whatever effort CC sends — verified by request-log A/B: CC sent
@@ -1213,7 +1213,7 @@ Available cc-vendor-bridge functions:
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
-  ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (OPUS→sol / SONNET+HAIKU→luna(max),
+  ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (FABLE→sol / OPUS+SONNET+HAIKU→luna(max),
                       effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
   ccp-gpt-fast      → Same routing and context as ccp-gpt; priority service tier for all GPT-5.6 requests
