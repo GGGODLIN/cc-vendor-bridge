@@ -1042,6 +1042,10 @@ ccp-gpt() {
     export BASH_MAX_OUTPUT_LENGTH=${BASH_MAX_OUTPUT_LENGTH:-30000}
     # Tibo's alias sets false outright; GPT models' deferred-tool handling unverified.
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-false}
+    # C-1 harness: propagate --append-system-prompt to subagents + workflow agents.
+    # Belt-and-braces only — the injection below still repeats the rules for subagents
+    # the way ccp-glm does, because propagation is unverified for this vendor.
+    export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=${CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT:-1}
     # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
     # Skill(claude-api): the bundled skill injects ~800KB (~200k tokens) when triggered
     # (and it triggers on ANY Claude/LLM mention) — with this env's ~57k baseline that
@@ -1049,7 +1053,23 @@ ccp-gpt() {
     # No longer fatal at 1M, but a 200k single-shot injection is still not worth it.
     # --model flag beats settings.json "model" (user pins claude-fable-5[1m] there,
     # which otherwise silently overrides ANTHROPIC_MODEL and mis-routes on the relay).
-    command claude --effort xhigh --model "$ANTHROPIC_MODEL" --disallowed-tools 'WebSearch' 'Skill(claude-api)' "$@"
+    # --append-system-prompt: two harness-usage rules this vendor gets wrong by default,
+    # measured across 27 gpt-5.6-sol sessions (2026-08-22). (1) Polling: Claude-family
+    # sessions dispatched 170 agents across 9 large sessions and called TaskOutput 4 times
+    # total; gpt-5.6-sol runs sit at 1.0-3.5 polls per dispatch — session 9638d4b9 spent
+    # 6.9h of a 40h span blocked on 149 TaskOutput calls (106 at timeout>=5min) against
+    # 96 dispatches, while opus-4-6 session 16f5bfe6 polled once against 90. (2) Path
+    # switching: same session, a permit packet missing one blank line was answered by
+    # leaving CC for a headless `claude -p` run, which cost two classifier timeouts,
+    # $2.28, and 0 critics started before the model concluded in-session dispatch was
+    # right all along. Lives in the system prompt layer, so compaction reuses it verbatim
+    # (docs/en/prompt-caching: compaction replaces message history, reuses system prompt);
+    # ~/.claude/hooks/gpt-convergence-reminder.sh carries the same rules on the
+    # SessionStart(compact) path for GPT sessions this launcher did not start.
+    command claude --effort xhigh --model "$ANTHROPIC_MODEL" \
+      --disallowed-tools 'WebSearch' 'Skill(claude-api)' \
+      --append-system-prompt "背景工作等待：Agent 與背景 Bash 完成時，harness 會自動送 task-notification 回來喚醒 session，不需要主動確認。派工後直接進行下一件不相依的工作，不要用 TaskOutput block=true 站著等結果；只有在沒有其他可做的事、且必須拿到該結果才能繼續時才查一次，查完仍未完成就回去做別的，不要連續輪詢。撞錯先修根因：遇到格式、參數、路徑、空行這類小失敗，先判斷根因是否三行內可修，可修就直接修，不要因為一個小錯改走另一條執行路徑（改跑 headless claude -p、換一套工具鏈、繞去別的入口）——換路會帶進一整組新的失敗模式，而原始根因仍未解決；確實需要換路時，先說明為什麼根因不可修，再換。IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面兩條逐字放進它們的 prompt，subagent 不保證繼承本注入。" \
+      "$@"
   )
 }
 
