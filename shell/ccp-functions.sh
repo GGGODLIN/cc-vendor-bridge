@@ -1042,10 +1042,20 @@ ccp-gpt() {
     export BASH_MAX_OUTPUT_LENGTH=${BASH_MAX_OUTPUT_LENGTH:-30000}
     # Tibo's alias sets false outright; GPT models' deferred-tool handling unverified.
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-false}
-    # C-1 harness: propagate --append-system-prompt to subagents + workflow agents.
-    # Belt-and-braces only — the injection below still repeats the rules for subagents
-    # the way ccp-glm does, because propagation is unverified for this vendor.
-    export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=${CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT:-1}
+    # Subagent propagation is the --append-subagent-system-prompt FLAG's job, not the
+    # env var's. Probed on 2.1.239 (2026-08-22, marker ZQX7741 in the system prompt,
+    # routed-mech subagent asked to echo it back): with only
+    # CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1 the subagent answered NONE while the
+    # main session answered ZQX7741, i.e. the env var alone is inert — it is the gate,
+    # not the carrier. Re-run with the flag and the same subagent answered ZQX7741.
+    # The flag is hidden from --help (@internal in the binary) and its own help string
+    # says "only works with --print". Confirmed: the same marker probe run against an
+    # INTERACTIVE ccp-gpt returned NONE, with the subagent's recorded prompt verified
+    # clean (69 chars, no marker, no rule text). So the flag covers headless only and
+    # the IMPORTANT clause in the injection below is what covers interactive — that
+    # clause is load-bearing, not decorative: in a probe that explicitly ordered the
+    # main session NOT to pass the rules along, it pasted all 434 characters into the
+    # subagent prompt anyway.
     # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
     # Skill(claude-api): the bundled skill injects ~800KB (~200k tokens) when triggered
     # (and it triggers on ANY Claude/LLM mention) — with this env's ~57k baseline that
@@ -1066,9 +1076,11 @@ ccp-gpt() {
     # (docs/en/prompt-caching: compaction replaces message history, reuses system prompt);
     # ~/.claude/hooks/gpt-convergence-reminder.sh carries the same rules on the
     # SessionStart(compact) path for GPT sessions this launcher did not start.
+    local _rules="背景工作等待：Agent 與背景 Bash 完成時，harness 會自動送 task-notification 回來喚醒 session，不需要主動確認。派工後直接進行下一件不相依的工作，不要用 TaskOutput block=true 站著等結果；只有在沒有其他可做的事、且必須拿到該結果才能繼續時才查一次，查完仍未完成就回去做別的，不要連續輪詢。撞錯先修根因：遇到格式、參數、路徑、空行這類小失敗，先判斷根因是否三行內可修，可修就直接修，不要因為一個小錯改走另一條執行路徑（改跑 headless claude -p、換一套工具鏈、繞去別的入口）——換路會帶進一整組新的失敗模式，而原始根因仍未解決；確實需要換路時，先說明為什麼根因不可修，再換。"
     command claude --effort xhigh --model "$ANTHROPIC_MODEL" \
       --disallowed-tools 'WebSearch' 'Skill(claude-api)' \
-      --append-system-prompt "背景工作等待：Agent 與背景 Bash 完成時，harness 會自動送 task-notification 回來喚醒 session，不需要主動確認。派工後直接進行下一件不相依的工作，不要用 TaskOutput block=true 站著等結果；只有在沒有其他可做的事、且必須拿到該結果才能繼續時才查一次，查完仍未完成就回去做別的，不要連續輪詢。撞錯先修根因：遇到格式、參數、路徑、空行這類小失敗，先判斷根因是否三行內可修，可修就直接修，不要因為一個小錯改走另一條執行路徑（改跑 headless claude -p、換一套工具鏈、繞去別的入口）——換路會帶進一整組新的失敗模式，而原始根因仍未解決；確實需要換路時，先說明為什麼根因不可修，再換。IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面兩條逐字放進它們的 prompt，subagent 不保證繼承本注入。" \
+      --append-system-prompt "${_rules}IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面兩條逐字放進它們的 prompt。互動模式下 subagent 不會繼承本注入，只有 --print 模式才會。" \
+      --append-subagent-system-prompt "$_rules" \
       "$@"
   )
 }
