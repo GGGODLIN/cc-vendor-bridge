@@ -185,8 +185,12 @@ ccp-glm() {
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000
     export API_TIMEOUT_MS=3000000
     export ENABLE_TOOL_SEARCH=auto
-    # C-1 harness: propagate --append-system-prompt to subagents + workflow agents.
-    export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1
+    # Subagent propagation moved to the --append-subagent-system-prompt flag below.
+    # CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1 sat here from 2026-06-22 (e7933f1)
+    # as "propagate --append-system-prompt to subagents" and was never verified; a
+    # 2026-08-22 marker probe on CC 2.1.239 showed the env var alone is the gate, not
+    # the carrier — the subagent saw nothing while the main session saw the marker.
+    # The flag implies the env var, so setting it separately is redundant.
     # --disallowed-tools WebSearch — z.ai endpoint rejects CC client-side WebSearch
     # tool schema with 400 [1210] Invalid API parameter (2026-06-22 verified for
     # glm-4.7 / glm-5.2; see _index_cc_model_swap entry 2026-06-22). Disable upfront
@@ -199,10 +203,12 @@ ccp-glm() {
     # to glm-4.7 (200K window): large sessions wedge on a misleading "context window
     # limit" error, small sessions silently degrade (2026-07-04 proxy-capture verified,
     # sessions bcaae410 / a2a18881).
+    local _nudge="WebSearch is disabled on this vendor (z.ai endpoint rejects CC client-side WebSearch schema with 400 [1210] — verified 2026-06-22 for glm-4.7 / glm-5.2). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no z.ai Coding Plan quota cost). Pass --json flag for raw JSON if you need to parse fields."
     claude --model 'glm-5.2[1m]' \
       --fallback-model 'glm-5.2[1m]' \
       --disallowed-tools WebSearch \
-      --append-system-prompt "WebSearch is disabled on this vendor (z.ai endpoint rejects CC client-side WebSearch schema with 400 [1210] — verified 2026-06-22 for glm-4.7 / glm-5.2). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no z.ai Coding Plan quota cost). Pass --json flag for raw JSON if you need to parse fields. IMPORTANT: When dispatching Task subagents or workflow agents that may need web search, you MUST include this verbatim instruction in their prompt: 'For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\"' — subagents do not auto-inherit this nudge (session 2650cf5f verified: subagent fell back to DuckDuckGo/Bing/Google HTML scraping)." \
+      --append-system-prompt "${_nudge} IMPORTANT: When dispatching Task subagents or workflow agents that may need web search, you MUST include this verbatim instruction in their prompt: 'For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\"' — in interactive mode subagents do not inherit this nudge (session 2650cf5f verified: subagent fell back to DuckDuckGo/Bing/Google HTML scraping; 2026-08-22 marker probe confirmed the flag below covers --print runs only)." \
+      --append-subagent-system-prompt "$_nudge" \
       "$@"
   )
 }
@@ -356,7 +362,9 @@ ccp-bruce() {
     # `tool_reference` content blocks with 400 (36/41 subagents killed in the
     # devspace-pr-review-eval workflow); re-probed 200 on api.bruceai.net 2026-08-17.
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    export CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1
+    # Subagent propagation moved to --append-subagent-system-prompt below; the env var
+    # that sat here since 2026-06-22 is only the gate and carries nothing on its own
+    # (2026-08-22 marker probe on CC 2.1.239). The flag implies it.
     # WebSearch is ENABLED again as of 2026-08-17. The 2026-06-19 verdict (session
     # 580f03bc, "silent fabrication", 3/3 prompts) no longer reproduces. Controlled
     # re-probe used a fact that cannot exist in any training set — the claude-code
@@ -375,10 +383,12 @@ ccp-bruce() {
     # in session c83482eb, 2026-07-14).
     # --model CLI flag outranks settings.json, whose "model" pin would otherwise
     # override the env mapping and mis-route the session.
+    local _nudge="This vendor bills per token against a prepaid balance, and the context window is pinned at 272,000 because crossing that line rebills the entire request at double the input rate. Budget context deliberately. WebSearch works here and returns real results, but each call injects roughly 21,000 tokens of search output — about 8% of the whole window. For lightweight factual lookups prefer the Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — top 5 results with LLM-ready highlights from Exa neural search, free tier, zero Bruce token cost, and a fraction of the context. Pass --json for raw fields. Reserve WebSearch for cases that genuinely need live page content or where exa comes back empty."
     claude --effort "${CCP_BRUCE_EFFORT:-high}" \
       --model "$ANTHROPIC_MODEL" \
       --disallowed-tools 'Skill(claude-api)' \
-      --append-system-prompt "This vendor bills per token against a prepaid balance, and the context window is pinned at 272,000 because crossing that line rebills the entire request at double the input rate. Budget context deliberately. WebSearch works here and returns real results, but each call injects roughly 21,000 tokens of search output — about 8% of the whole window. For lightweight factual lookups prefer the Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — top 5 results with LLM-ready highlights from Exa neural search, free tier, zero Bruce token cost, and a fraction of the context. Pass --json for raw fields. Reserve WebSearch for cases that genuinely need live page content or where exa comes back empty. IMPORTANT: when dispatching Task subagents or workflow agents, include this guidance verbatim in their prompt — subagents were verified not to inherit it (session 2650cf5f: a subagent fell back to scraping DuckDuckGo/Bing/Google HTML)." \
+      --append-system-prompt "${_nudge} IMPORTANT: when dispatching Task subagents or workflow agents, include this guidance verbatim in their prompt — in interactive mode subagents do not inherit it (session 2650cf5f: a subagent fell back to scraping DuckDuckGo/Bing/Google HTML; 2026-08-22 marker probe confirmed the flag below covers --print runs only)." \
+      --append-subagent-system-prompt "$_nudge" \
       "$@"
   )
 }
