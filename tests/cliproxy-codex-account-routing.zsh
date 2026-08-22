@@ -21,7 +21,7 @@ ruby -rbase64 -rjson -ryaml -e '
   abort("missing Codex Pro OAuth account") unless pro
   abort("missing Codex Team OAuth account") unless team
   abort("Codex Pro priority must be 10") unless pro.fetch(1) == 10
-  abort("Codex Team priority must be 0") unless team.fetch(1) == 0
+  abort("Codex Team priority must be 0 or absent (Go omitempty drops a zero)") unless (team.fetch(1) || 0) == 0
 
   puts("ok - Codex session affinity enabled")
   puts("ok - Codex Pro is primary and Team is fallback")
