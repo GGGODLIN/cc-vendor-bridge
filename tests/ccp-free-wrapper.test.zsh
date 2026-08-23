@@ -37,6 +37,15 @@ assert_file_line() {
   fi
 }
 
+assert_file_not_line() {
+  local label="$1" path="$2" line="$3"
+  if [[ ! -f "$path" ]] || ! /usr/bin/grep -Fqx -- "$line" "$path"; then
+    ok "$label"
+  else
+    bad "$label"
+  fi
+}
+
 assert_file_absent() {
   local label="$1" path="$2"
   if [[ ! -e "$path" ]]; then
@@ -81,11 +90,27 @@ if [ -f "$CCP_FREE_READY_FILE" ]; then
   exit 0
 fi
 exit 1'
+  write_executable "$FIXTURE/bin/lsof" '#!/bin/sh
+if [ "${CCP_FREE_LSOF_MODE:-match}" = rogue ]; then
+  printf "%s\n" "${CCP_FREE_ROGUE_PID:-9999}"
+else
+  printf "%s\n" "${CCP_FREE_JOB_PID:-4242}"
+fi
+exit 0'
   write_executable "$FIXTURE/bin/launchctl" '#!/bin/sh
-printf "%s\n" "$*" > "$CCP_FREE_LAUNCH_LOG"
+printf "%s\n" "$*" >> "$CCP_FREE_LAUNCH_LOG"
+if [ "$1" = print ]; then
+  if [ -f "$CCP_FREE_JOB_STATE_FILE" ]; then
+    printf "state = running\n"
+    printf "pid = %s\n" "$CCP_FREE_JOB_PID"
+    exit 0
+  fi
+  exit 113
+fi
 case "${CCP_FREE_LAUNCH_MODE:-success}" in
   ready)
     : > "$CCP_FREE_READY_FILE"
+    : > "$CCP_FREE_JOB_STATE_FILE"
     exit 0
     ;;
   failure)
@@ -125,7 +150,10 @@ invoke_wrapper() {
   (
     export CCP_FREE_CONFIG_DIR="$FIXTURE/config"
     export CCP_FREE_NC_BIN="$FIXTURE/bin/nc"
+    export CCP_FREE_LSOF_BIN="$FIXTURE/bin/lsof"
     export CCP_FREE_LAUNCHCTL_BIN="$FIXTURE/bin/launchctl"
+    export CCP_FREE_JOB_STATE_FILE="$FIXTURE/job.state"
+    export CCP_FREE_JOB_PID=4242
     export CCP_FREE_SLEEP_BIN="$FIXTURE/bin/sleep"
     export CCP_FREE_CLAUDE_BIN="$FIXTURE/bin/claude"
     export CCP_FREE_READY_FILE="$FIXTURE/ready"
@@ -180,12 +208,32 @@ assert_file_absent 'weak token mode does not kickstart' "$FIXTURE/launch.log"
 assert_file_absent 'weak token mode never invokes claude' "$FIXTURE/capture.log"
 teardown_fixture
 
-print -r -- '── server already ready'
+print -r -- '── server identity'
 setup_fixture
 : > "$FIXTURE/ready"
 invoke_wrapper success
+assert_status 'ready port without running job returns failure' 1
+assert_output_contains 'not-running job prints diagnostic' 'dedicated launchd job is not running'
+assert_file_absent 'not-running job never invokes claude' "$FIXTURE/capture.log"
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+: > "$FIXTURE/job.state"
+CCP_FREE_LSOF_MODE=rogue invoke_wrapper success
+assert_status 'rogue listener owner returns failure' 1
+assert_output_contains 'rogue listener prints diagnostic' 'listener owner does not match'
+assert_file_absent 'rogue listener never invokes claude' "$FIXTURE/capture.log"
+unset CCP_FREE_LSOF_MODE
+teardown_fixture
+
+print -r -- '── server already ready'
+setup_fixture
+: > "$FIXTURE/ready"
+: > "$FIXTURE/job.state"
+invoke_wrapper success
 assert_status 'ready server returns success' 0
-assert_file_absent 'ready server does not kickstart' "$FIXTURE/launch.log"
+assert_file_not_line 'ready server does not kickstart' "$FIXTURE/launch.log" "kickstart gui/$UID/com.gggodlin.ccp-free-fcc"
 assert_file_line 'ready server invokes normal claude' "$FIXTURE/capture.log" 'called=1'
 assert_file_line 'free marker is process-local' "$FIXTURE/capture.log" 'cc_vendor=free'
 assert_file_line 'FCC endpoint is fixed' "$FIXTURE/capture.log" 'base_url=http://127.0.0.1:18082'

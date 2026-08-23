@@ -1248,10 +1248,15 @@ ccp-free() {
   local token
   local model='nvidia_nim/nvidia/nemotron-3-super-120b-a12b'
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
+  local lsof_bin="${CCP_FREE_LSOF_BIN:-/usr/sbin/lsof}"
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
   local claude_bin="${CCP_FREE_CLAUDE_BIN:-claude}"
   local service='com.gggodlin.ccp-free-fcc'
+  local job_info
+  local job_state
+  local job_pid
+  local listener_pids
 
   if [[ ! -f "$token_file" ]]; then
     print -P "%F{red}[ccp-free] proxy token is missing: $token_file%f" >&2
@@ -1260,11 +1265,6 @@ ccp-free() {
   token_file_mode=$(/usr/bin/stat -f '%Lp' "$token_file" 2>/dev/null || /usr/bin/stat -c '%a' "$token_file" 2>/dev/null)
   if [[ "$token_file_mode" != 600 ]]; then
     print -P "%F{red}[ccp-free] proxy token must use mode 600: $token_file%f" >&2
-    return 1
-  fi
-  token="$(<"$token_file")"
-  if [[ -z "$token" ]]; then
-    print -P "%F{red}[ccp-free] proxy token is empty: $token_file%f" >&2
     return 1
   fi
 
@@ -1283,6 +1283,31 @@ ccp-free() {
       print -P "%F{red}[ccp-free] FCC server did not become ready in 5s — aborting%f" >&2
       return 1
     fi
+  fi
+
+  if ! job_info=$("$launchctl_bin" print "gui/$UID/$service" 2>/dev/null); then
+    print -P "%F{red}[ccp-free] dedicated launchd job is not running: $service — aborting%f" >&2
+    return 1
+  fi
+  job_state=$(print -r -- "$job_info" | /usr/bin/awk '$1 == "state" && $2 == "=" {print $3; exit}')
+  if [[ "$job_state" != running ]]; then
+    print -P "%F{red}[ccp-free] dedicated launchd job is not running: $service — aborting%f" >&2
+    return 1
+  fi
+  job_pid=$(print -r -- "$job_info" | /usr/bin/awk '$1 == "pid" && $2 == "=" {print $3; exit}')
+  if [[ "$job_pid" != <-> ]]; then
+    print -P "%F{red}[ccp-free] dedicated launchd job has no valid PID: $service — aborting%f" >&2
+    return 1
+  fi
+  if ! listener_pids=$("$lsof_bin" -nP -iTCP:18082 -sTCP:LISTEN -t 2>/dev/null) || ! print -r -- "$listener_pids" | /usr/bin/grep -Fxq -- "$job_pid"; then
+    print -P "%F{red}[ccp-free] listener owner does not match dedicated launchd job PID $job_pid — aborting%f" >&2
+    return 1
+  fi
+
+  token="$(<"$token_file")"
+  if [[ -z "$token" ]]; then
+    print -P "%F{red}[ccp-free] proxy token is empty: $token_file%f" >&2
+    return 1
   fi
 
   (
