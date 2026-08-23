@@ -134,6 +134,9 @@ exit 0'
   printf "sonnet_model=%s\n" "${ANTHROPIC_DEFAULT_SONNET_MODEL-}"
   printf "haiku_model=%s\n" "${ANTHROPIC_DEFAULT_HAIKU_MODEL-}"
   printf "subagent_model=%s\n" "${CLAUDE_CODE_SUBAGENT_MODEL-}"
+  printf "max_context_tokens=%s\n" "${CLAUDE_CODE_MAX_CONTEXT_TOKENS-}"
+  printf "auto_compact_window=%s\n" "${CLAUDE_CODE_AUTO_COMPACT_WINDOW-}"
+  printf "disable_compact=%s\n" "${DISABLE_COMPACT-}"
   printf "anthropic_fallback=%s\n" "${ANTHROPIC_FALLBACK_MODEL-}"
   printf "claude_code_fallback=%s\n" "${CLAUDE_CODE_FALLBACK_MODEL-}"
   index=1
@@ -171,6 +174,7 @@ invoke_wrapper() {
     export CLAUDE_CODE_SUBAGENT_MODEL='outer-subagent-model'
     export ANTHROPIC_FALLBACK_MODEL='claude-opus-4-6'
     export CLAUDE_CODE_FALLBACK_MODEL='claude-opus-4-6'
+    export DISABLE_COMPACT=1
     source "$SRC"
     ccp-free --print probe
   ) > "$FIXTURE/output.log" 2>&1
@@ -250,6 +254,9 @@ assert_file_line 'OPUS model is live model' "$FIXTURE/capture.log" "opus_model=$
 assert_file_line 'SONNET model is live model' "$FIXTURE/capture.log" "sonnet_model=$MODEL"
 assert_file_line 'HAIKU model is live model' "$FIXTURE/capture.log" "haiku_model=$MODEL"
 assert_file_line 'subagent model is live model' "$FIXTURE/capture.log" "subagent_model=$MODEL"
+assert_file_line 'context window matches Ox metadata' "$FIXTURE/capture.log" 'max_context_tokens=1048576'
+assert_file_line 'auto compact requests the supported 1M window' "$FIXTURE/capture.log" 'auto_compact_window=1000000'
+assert_file_line 'outer compact disable is removed' "$FIXTURE/capture.log" 'disable_compact='
 assert_file_line 'paid fallback env is removed' "$FIXTURE/capture.log" 'anthropic_fallback='
 assert_file_line 'Claude Code fallback env is removed' "$FIXTURE/capture.log" 'claude_code_fallback='
 assert_file_line 'CLI model flag overrides settings' "$FIXTURE/capture.log" 'arg1=--model'
