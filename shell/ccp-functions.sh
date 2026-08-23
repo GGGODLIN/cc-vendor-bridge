@@ -1045,6 +1045,14 @@ ccp-gpt() {
     # 25,000 MCP cap would reach 75,000).
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-900000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    # Stream idle watchdog: CC aborts a turn with "Stream idle timeout - no chunks
+    # received" when the response stream stays silent for this long. Third-party
+    # endpoints floor at max(env, 300000) (CC 2.1.241 NQS/Gza), so the default is 5 min;
+    # sol at xhigh can sit in reasoning longer than that before its first byte and gets
+    # misread as a dead connection (2 sol sessions in 2026-07 jsonl). 10 min borrowed from
+    # remora-cc v0.1.18. Only cost: a genuinely dead stream waits 10 min instead of 5.
+    export CLAUDE_STREAM_IDLE_TIMEOUT_MS=${CLAUDE_STREAM_IDLE_TIMEOUT_MS:-600000}
+    export CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS=${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-600000}
     # Single-shot injection caps: oversized MCP output spills to a temp file, oversized
     # bash output truncates with a [KB removed] marker. These bound the overshoot past
     # the compaction line, which is what keeps the run clear of the 922,000 ceiling.
