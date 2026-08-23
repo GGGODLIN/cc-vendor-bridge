@@ -2,7 +2,7 @@
 # cc-vendor-bridge — Path 0 zsh functions
 #
 # ⚠️ 本檔在契約測試底下 — 改完必跑（從 repo root）：
-#   for t in tests/ccp-gpt-routing-fast.zsh tests/ccp-gpt-whoami.test.zsh tests/ccp-relay-priority.test.zsh; do zsh "$t" || break; done
+#   for t in tests/ccp-free-wrapper.test.zsh tests/ccp-gpt-routing-fast.zsh tests/ccp-gpt-whoami.test.zsh tests/ccp-relay-priority.test.zsh; do zsh "$t" || break; done
 #
 # Each ccp-* function opens Claude Code pointed at a different vendor's
 # Anthropic-native endpoint, using a subshell so env vars don't leak.
@@ -1241,6 +1241,65 @@ ccp-gemini-flash() {
   )
 }
 
+ccp-free() {
+  local config_dir="${CCP_FREE_CONFIG_DIR:-$HOME/.config/ccp-free}"
+  local token_file="$config_dir/proxy-token"
+  local token_file_mode
+  local token
+  local model='nvidia_nim/nvidia/nemotron-3-super-120b-a12b'
+  local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
+  local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/bin/launchctl}"
+  local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
+  local claude_bin="${CCP_FREE_CLAUDE_BIN:-claude}"
+  local service='com.gggodlin.ccp-free-fcc'
+
+  if [[ ! -f "$token_file" ]]; then
+    print -P "%F{red}[ccp-free] proxy token is missing: $token_file%f" >&2
+    return 1
+  fi
+  token_file_mode=$(/usr/bin/stat -f '%Lp' "$token_file" 2>/dev/null || /usr/bin/stat -c '%a' "$token_file" 2>/dev/null)
+  if [[ "$token_file_mode" != 600 ]]; then
+    print -P "%F{red}[ccp-free] proxy token must use mode 600: $token_file%f" >&2
+    return 1
+  fi
+  token="$(<"$token_file")"
+  if [[ -z "$token" ]]; then
+    print -P "%F{red}[ccp-free] proxy token is empty: $token_file%f" >&2
+    return 1
+  fi
+
+  if ! "$nc_bin" -z 127.0.0.1 18082 2>/dev/null; then
+    if ! "$launchctl_bin" kickstart "gui/$UID/$service" 2>/dev/null; then
+      print -P "%F{red}[ccp-free] failed to kickstart $service — aborting%f" >&2
+      return 1
+    fi
+    local i=0
+    while (( i < 50 )); do
+      "$nc_bin" -z 127.0.0.1 18082 2>/dev/null && break
+      "$sleep_bin" 0.1
+      ((i++))
+    done
+    if (( i >= 50 )); then
+      print -P "%F{red}[ccp-free] FCC server did not become ready in 5s — aborting%f" >&2
+      return 1
+    fi
+  fi
+
+  (
+    unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL
+    export CC_VENDOR=free
+    export ANTHROPIC_BASE_URL=http://127.0.0.1:18082
+    export ANTHROPIC_AUTH_TOKEN="$token"
+    export ANTHROPIC_MODEL="$model"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="$model"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$model"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
+    export CLAUDE_CODE_SUBAGENT_MODEL="$model"
+    command "$claude_bin" --model "$model" "$@"
+  )
+}
+
 # ===== Helper: list available functions =====
 ccp-list() {
   cat <<EOF
@@ -1260,6 +1319,7 @@ Available cc-vendor-bridge functions:
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
+  ccp-free          → Isolated FCC NVIDIA route on :18082, started on demand
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
