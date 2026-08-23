@@ -4,7 +4,7 @@ set -u
 
 ROOT="${0:A:h:h}"
 SRC="$ROOT/shell/ccp-functions.sh"
-MODEL='nvidia_nim/nvidia/nemotron-3-super-120b-a12b'
+MODEL='open_router/stealth/ox-alpha'
 TOKEN='test-proxy-token'
 FAILURES=0
 FIXTURE=''
@@ -187,6 +187,11 @@ if [[ "$(ccp-list)" == *'ccp-free'* ]]; then
   ok 'ccp-list exposes ccp-free'
 else
   bad 'ccp-list exposes ccp-free'
+fi
+if [[ "$(ccp-list)" == *'OpenRouter Ox Alpha'* ]]; then
+  ok 'ccp-list identifies OpenRouter Ox Alpha'
+else
+  bad 'ccp-list identifies OpenRouter Ox Alpha'
 fi
 
 print -r -- '── token preflight'

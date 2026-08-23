@@ -1246,7 +1246,7 @@ ccp-free() {
   local token_file="$config_dir/proxy-token"
   local token_file_mode
   local token
-  local model='nvidia_nim/nvidia/nemotron-3-super-120b-a12b'
+  local model='open_router/stealth/ox-alpha'
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
   local lsof_bin="${CCP_FREE_LSOF_BIN:-/usr/sbin/lsof}"
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/bin/launchctl}"
@@ -1344,7 +1344,7 @@ Available cc-vendor-bridge functions:
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
-  ccp-free          → Isolated FCC NVIDIA route on :18082, started on demand
+  ccp-free          → Isolated FCC OpenRouter Ox Alpha route on :18082, started on demand
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
