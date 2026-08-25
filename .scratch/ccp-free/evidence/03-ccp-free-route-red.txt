@@ -1,0 +1,31 @@
+── server already ready
+not ok - ready server returns success
+ok - ready server does not kickstart
+not ok - ready server invokes normal claude
+not ok - free marker is process-local
+not ok - FCC endpoint is fixed
+not ok - proxy token is used
+not ok - Anthropic API key is removed
+not ok - main model is live model
+not ok - FABLE model is live model
+not ok - OPUS model is live model
+not ok - SONNET model is live model
+not ok - HAIKU model is live model
+not ok - subagent model is live model
+not ok - paid fallback env is removed
+not ok - Claude Code fallback env is removed
+not ok - CLI model flag overrides settings
+not ok - CLI model flag pins live model
+not ok - caller arguments are preserved
+── server not started
+not ok - cold server returns success after kickstart
+not ok - only dedicated job is kicked
+not ok - cold server invokes normal claude
+── startup timeout
+not ok - startup timeout returns failure
+not ok - timeout kickstarts dedicated job
+ok - timeout never invokes claude
+── startup failure
+not ok - launch failure returns failure
+not ok - launch failure targets dedicated job
+ok - launch failure never invokes claude
