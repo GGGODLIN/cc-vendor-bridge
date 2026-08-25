@@ -378,15 +378,16 @@ ccp-bruce() {
     # just thinking + text), so CC's citation UI stays dark — the URLs land in prose.
     # The real cost is context, not accuracy: ~21K tokens injected per search against a
     # 272K window, hence the exa-first nudge below.
-    # Skill(claude-api) stays blocked — it injects ~800KB (~200k tokens) on any Claude
-    # or LLM mention, which would blow this window outright (ccp-gpt hit that at 272k
-    # in session c83482eb, 2026-07-14).
+    # Skill(claude-api) unblocked 2026-08-25 (trial claude-api-skill-unblock, review
+    # 2026-09-01): CC 2.1.243 loads it progressively — headless probe measured ~19k
+    # tokens per invoke on the relay (52,879 baseline → 71,875 with the skill), not the
+    # ~200k that blew the 272k window on 2026-07-14 (session c83482eb). Re-block if the
+    # trial shows GPT invoking it several times per session.
     # --model CLI flag outranks settings.json, whose "model" pin would otherwise
     # override the env mapping and mis-route the session.
     local _nudge="This vendor bills per token against a prepaid balance, and the context window is pinned at 272,000 because crossing that line rebills the entire request at double the input rate. Budget context deliberately. WebSearch works here and returns real results, but each call injects roughly 21,000 tokens of search output — about 8% of the whole window. For lightweight factual lookups prefer the Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — top 5 results with LLM-ready highlights from Exa neural search, free tier, zero Bruce token cost, and a fraction of the context. Pass --json for raw fields. Reserve WebSearch for cases that genuinely need live page content or where exa comes back empty."
     claude --effort "${CCP_BRUCE_EFFORT:-high}" \
       --model "$ANTHROPIC_MODEL" \
-      --disallowed-tools 'Skill(claude-api)' \
       --append-system-prompt "${_nudge} IMPORTANT: when dispatching Task subagents or workflow agents, include this guidance verbatim in their prompt — in interactive mode subagents do not inherit it (session 2650cf5f: a subagent fell back to scraping DuckDuckGo/Bing/Google HTML; 2026-08-22 marker probe confirmed the flag below covers --print runs only)." \
       --append-subagent-system-prompt "$_nudge" \
       "$@"
@@ -1075,10 +1076,12 @@ ccp-gpt() {
     # main session NOT to pass the rules along, it pasted all 434 characters into the
     # subagent prompt anyway.
     # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
-    # Skill(claude-api): the bundled skill injects ~800KB (~200k tokens) when triggered
-    # (and it triggers on ANY Claude/LLM mention) — with this env's ~57k baseline that
-    # blew the then-272k window with "Prompt is too long" (session c83482eb, 2026-07-14).
-    # No longer fatal at 1M, but a 200k single-shot injection is still not worth it.
+    # Skill(claude-api): unblocked 2026-08-25 (trial claude-api-skill-unblock, review
+    # 2026-09-01). The 2026-07-14 "Prompt is too long" (session c83482eb) came from an
+    # older CC that injected ~800KB in one shot; CC 2.1.243 loads it progressively and a
+    # headless probe on this launcher measured 52,879 → 71,875 input tokens (~19k per
+    # invoke). Still trigger-happy on any Claude/LLM mention — if the trial shows several
+    # invokes per session, isolate it behind a claude-api-lookup agent instead of re-blocking.
     # --model flag beats settings.json "model" (user pins claude-fable-5[1m] there,
     # which otherwise silently overrides ANTHROPIC_MODEL and mis-routes on the relay).
     # --append-system-prompt: two harness-usage rules this vendor gets wrong by default,
@@ -1096,7 +1099,7 @@ ccp-gpt() {
     # SessionStart(compact) path for GPT sessions this launcher did not start.
     local _rules="背景工作等待：Agent 與背景 Bash 完成時，harness 會自動送 task-notification 回來喚醒 session，不需要主動確認。派工後直接進行下一件不相依的工作，不要用 TaskOutput block=true 站著等結果；只有在沒有其他可做的事、且必須拿到該結果才能繼續時才查一次，查完仍未完成就回去做別的，不要連續輪詢。撞錯先修根因：遇到格式、參數、路徑、空行這類小失敗，先判斷根因是否三行內可修，可修就直接修，不要因為一個小錯改走另一條執行路徑（改跑 headless claude -p、換一套工具鏈、繞去別的入口）——換路會帶進一整組新的失敗模式，而原始根因仍未解決；確實需要換路時，先說明為什麼根因不可修，再換。"
     command claude --effort xhigh --model "$ANTHROPIC_MODEL" \
-      --disallowed-tools 'WebSearch' 'Skill(claude-api)' \
+      --disallowed-tools 'WebSearch' \
       --append-system-prompt "${_rules}IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面兩條逐字放進它們的 prompt。互動模式下 subagent 不會繼承本注入，只有 --print 模式才會。" \
       --append-subagent-system-prompt "$_rules" \
       "$@"
