@@ -106,6 +106,11 @@ assert_contains \
   "$ccp_list_output" \
   "Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol"
 
+assert_contains \
+  "ccp-list describes the all-Sol Standard wrapper" \
+  "$ccp_list_output" \
+  "ccp-gpt-smart"
+
 if (( ${+functions[ccp-gpt-fast]} )); then
   ccp-gpt() {
     print -r -- "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}|${ANTHROPIC_CUSTOM_HEADERS:-}"
@@ -129,6 +134,34 @@ if (( ${+functions[ccp-gpt-fast]} )); then
     "$(ANTHROPIC_CUSTOM_HEADERS='X-Existing: yes' ccp-gpt-fast)"
 else
   print -ru2 -- "not ok - ccp-gpt-fast exists"
+  (( failures++ ))
+fi
+
+if (( ${+functions[ccp-gpt-smart]} )); then
+  ccp-gpt() {
+    print -r -- "${ANTHROPIC_MODEL:-}|${ANTHROPIC_DEFAULT_FABLE_MODEL:-}|${ANTHROPIC_DEFAULT_OPUS_MODEL:-}|${ANTHROPIC_DEFAULT_SONNET_MODEL:-}|${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}|${CLAUDE_CODE_SUBAGENT_MODEL:-}|${ANTHROPIC_CUSTOM_HEADERS:-}"
+  }
+
+  unset ANTHROPIC_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL
+  unset ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
+  unset CLAUDE_CODE_SUBAGENT_MODEL ANTHROPIC_CUSTOM_HEADERS
+
+  assert_eq \
+    "ccp-gpt-smart forces every model slot to Standard Sol" \
+    "gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|" \
+    "$(ccp-gpt-smart)"
+
+  assert_eq \
+    "ccp-gpt-smart overrides inherited model routing" \
+    "gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|" \
+    "$(ANTHROPIC_MODEL=gpt-5.6-sol-fast ANTHROPIC_DEFAULT_FABLE_MODEL=claude-fable-5 ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_SONNET_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_HAIKU_MODEL='gpt-5.6-luna(max)' CLAUDE_CODE_SUBAGENT_MODEL='gpt-5.6-luna(max)' ccp-gpt-smart)"
+
+  assert_eq \
+    "ccp-gpt-smart removes inherited Fast header and preserves other headers" \
+    $'gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|X-Existing: yes' \
+    "$(ANTHROPIC_CUSTOM_HEADERS=$'X-Existing: yes\nX-CCP-Fast: 1' ccp-gpt-smart)"
+else
+  print -ru2 -- "not ok - ccp-gpt-smart exists"
   (( failures++ ))
 fi
 

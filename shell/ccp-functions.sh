@@ -1118,6 +1118,25 @@ ccp-gpt-fast() {
   )
 }
 
+ccp-gpt-smart() {
+  (
+    local custom_headers
+    custom_headers="$(print -r -- "${ANTHROPIC_CUSTOM_HEADERS:-}" | /usr/bin/grep -vFx -- 'X-CCP-Fast: 1')"
+    if [[ -n "$custom_headers" ]]; then
+      export ANTHROPIC_CUSTOM_HEADERS="$custom_headers"
+    else
+      unset ANTHROPIC_CUSTOM_HEADERS
+    fi
+    ANTHROPIC_MODEL=gpt-5.6-sol \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=gpt-5.6-sol \
+    ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5.6-sol \
+    ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.6-sol \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.6-sol \
+    CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol \
+      ccp-gpt "$@"
+  )
+}
+
 # ===== CLIProxyAPI relay, Gemini via Antigravity OAuth (qwe70301 AI Pro) =====
 # Split into two entry points because the Pro and Flash tiers draw on the same
 # subscription quota at very different rates — keeping them separate makes the
@@ -1359,6 +1378,7 @@ Available cc-vendor-bridge functions:
                       concurrency 3, 1M context, tool search off)
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol;
                       priority service tier for all GPT-5.6 requests
+  ccp-gpt-smart     → All model slots forced to gpt-5.6-sol on the Standard service tier
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
   ccp-gpt-relogin   → Re-auth a Codex account AND restore the priority that --codex-login
