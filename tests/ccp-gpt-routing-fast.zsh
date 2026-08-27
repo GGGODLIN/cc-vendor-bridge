@@ -70,6 +70,16 @@ assert_contains \
   'ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-luna(max)}"'
 
 assert_contains \
+  "ccp-gpt keeps Sonnet on Luna at max effort" \
+  "${functions[ccp-gpt]}" \
+  'ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-luna(max)}"'
+
+assert_contains \
+  "ccp-gpt keeps Haiku on Luna at max effort" \
+  "${functions[ccp-gpt]}" \
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna(max)}"'
+
+assert_contains \
   "ccp-gpt exposes the Fast main-model option" \
   "${functions[ccp-gpt]}" \
   "ANTHROPIC_CUSTOM_MODEL_OPTION="
@@ -91,19 +101,31 @@ assert_not_contains \
   "$ccp_list_output" \
   "/model gpt-5.6-sol-fast"
 
+assert_contains \
+  "ccp-list explains Fast Opus routing" \
+  "$ccp_list_output" \
+  "FABLE+OPUS→sol / SONNET+HAIKU→luna(max)"
+
 if (( ${+functions[ccp-gpt-fast]} )); then
   ccp-gpt() {
-    print -r -- "${ANTHROPIC_CUSTOM_HEADERS:-}"
+    print -r -- "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}|${ANTHROPIC_CUSTOM_HEADERS:-}"
   }
 
+  unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_CUSTOM_HEADERS
+
   assert_eq \
-    "ccp-gpt-fast adds the opt-in header" \
-    "X-CCP-Fast: 1" \
+    "ccp-gpt-fast maps Opus to Sol and adds the opt-in header" \
+    "gpt-5.6-sol|X-CCP-Fast: 1" \
     "$(ccp-gpt-fast)"
 
   assert_eq \
+    "ccp-gpt-fast preserves an explicit Opus override" \
+    "gpt-5.6-luna(max)|X-CCP-Fast: 1" \
+    "$(ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-5.6-luna(max)' ccp-gpt-fast)"
+
+  assert_eq \
     "ccp-gpt-fast preserves existing custom headers" \
-    $'X-Existing: yes\nX-CCP-Fast: 1' \
+    $'gpt-5.6-sol|X-Existing: yes\nX-CCP-Fast: 1' \
     "$(ANTHROPIC_CUSTOM_HEADERS='X-Existing: yes' ccp-gpt-fast)"
 else
   print -ru2 -- "not ok - ccp-gpt-fast exists"

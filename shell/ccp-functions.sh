@@ -1108,6 +1108,7 @@ ccp-gpt() {
 
 ccp-gpt-fast() {
   (
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-sol}"
     if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
       export ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS}"$'\n'"X-CCP-Fast: 1"
     else
@@ -1356,7 +1357,8 @@ Available cc-vendor-bridge functions:
   ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (FABLE→sol / OPUS+SONNET+HAIKU→luna(max),
                       Sol effort xhigh / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
-  ccp-gpt-fast      → Same routing and context as ccp-gpt; priority service tier for all GPT-5.6 requests
+  ccp-gpt-fast      → Same context as ccp-gpt; FABLE+OPUS→sol / SONNET+HAIKU→luna(max),
+                      priority service tier for all GPT-5.6 requests
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
   ccp-gpt-relogin   → Re-auth a Codex account AND restore the priority that --codex-login
