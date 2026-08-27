@@ -1265,88 +1265,57 @@ ccp-gemini-flash() {
 }
 
 ccp-free() {
-  local config_dir="${CCP_FREE_CONFIG_DIR:-$HOME/.config/ccp-free}"
-  local token_file="$config_dir/proxy-token"
-  local token_file_mode
-  local token
-  local model='open_router/stealth/ox-alpha'
+  # Free tier via CLIProxyAPI → cline2api → Cline account (GLM-5.3-Flash, free quota)
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
-  local lsof_bin="${CCP_FREE_LSOF_BIN:-/usr/sbin/lsof}"
-  local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/bin/launchctl}"
+  local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
+  local keys_file="${CCP_FREE_KEYS_FILE:-$HOME/.cli-proxy-api/keys.env}"
   local claude_bin="${CCP_FREE_CLAUDE_BIN:-claude}"
-  local service='com.gggodlin.ccp-free-fcc'
-  local job_info
-  local job_state
-  local job_pid
-  local listener_pids
+  local relay_service='com.philip.cli-proxy-api'
 
-  if [[ ! -f "$token_file" ]]; then
-    print -P "%F{red}[ccp-free] proxy token is missing: $token_file%f" >&2
-    return 1
-  fi
-  token_file_mode=$(/usr/bin/stat -f '%Lp' "$token_file" 2>/dev/null || /usr/bin/stat -c '%a' "$token_file" 2>/dev/null)
-  if [[ "$token_file_mode" != 600 ]]; then
-    print -P "%F{red}[ccp-free] proxy token must use mode 600: $token_file%f" >&2
+  if [[ ! -f "$keys_file" ]]; then
+    print -P "%F{red}[ccp-free] keys file is missing: $keys_file%f" >&2
     return 1
   fi
 
-  if ! "$nc_bin" -z 127.0.0.1 18082 2>/dev/null; then
-    if ! "$launchctl_bin" kickstart "gui/$UID/$service" 2>/dev/null; then
-      print -P "%F{red}[ccp-free] failed to kickstart $service — aborting%f" >&2
-      return 1
-    fi
+  if ! "$nc_bin" -z 127.0.0.1 8317 2>/dev/null; then
+    echo "[ccp-free] relay not listening, kickstarting launchd service..." >&2
+    "$launchctl_bin" kickstart "gui/$UID/$relay_service" >/dev/null 2>&1
     local i=0
     while (( i < 50 )); do
-      "$nc_bin" -z 127.0.0.1 18082 2>/dev/null && break
+      "$nc_bin" -z 127.0.0.1 8317 2>/dev/null && break
       "$sleep_bin" 0.1
       ((i++))
     done
     if (( i >= 50 )); then
-      print -P "%F{red}[ccp-free] FCC server did not become ready in 5s — aborting%f" >&2
+      print -P "%F{red}[ccp-free] relay did not become ready in 5s — check ~/.cli-proxy-api/logs/%f" >&2
       return 1
     fi
   fi
-
-  if ! job_info=$("$launchctl_bin" print "gui/$UID/$service" 2>/dev/null); then
-    print -P "%F{red}[ccp-free] dedicated launchd job is not running: $service — aborting%f" >&2
-    return 1
-  fi
-  job_state=$(print -r -- "$job_info" | /usr/bin/awk '$1 == "state" && $2 == "=" {print $3; exit}')
-  if [[ "$job_state" != running ]]; then
-    print -P "%F{red}[ccp-free] dedicated launchd job is not running: $service — aborting%f" >&2
-    return 1
-  fi
-  job_pid=$(print -r -- "$job_info" | /usr/bin/awk '$1 == "pid" && $2 == "=" {print $3; exit}')
-  if [[ "$job_pid" != <-> ]]; then
-    print -P "%F{red}[ccp-free] dedicated launchd job has no valid PID: $service — aborting%f" >&2
-    return 1
-  fi
-  if ! listener_pids=$("$lsof_bin" -nP -iTCP:18082 -sTCP:LISTEN -t 2>/dev/null) || ! print -r -- "$listener_pids" | /usr/bin/grep -Fxq -- "$job_pid"; then
-    print -P "%F{red}[ccp-free] listener owner does not match dedicated launchd job PID $job_pid — aborting%f" >&2
-    return 1
-  fi
-
-  token="$(<"$token_file")"
-  if [[ -z "$token" ]]; then
-    print -P "%F{red}[ccp-free] proxy token is empty: $token_file%f" >&2
-    return 1
-  fi
-
   (
+    source "$keys_file"
+    if [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
+      print -P "%F{red}[ccp-free] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
+      exit 1
+    fi
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
     export CC_VENDOR=free
-    export ANTHROPIC_BASE_URL=http://127.0.0.1:18082
-    export ANTHROPIC_AUTH_TOKEN="$token"
-    export ANTHROPIC_MODEL="$model"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="$model"
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="$model"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="$model"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
-    export CLAUDE_CODE_SUBAGENT_MODEL="$model"
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1048576
-    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000
-    command "$claude_bin" --model "$model" "$@"
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-glm-free}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL='glm-free'
+    export ANTHROPIC_DEFAULT_OPUS_MODEL='glm-free'
+    export ANTHROPIC_DEFAULT_SONNET_MODEL='glm-free'
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL='glm-free'
+    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-glm-free(xhigh)}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-GLM 5.3 Flash xhigh}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Same GLM model with xhigh reasoning effort}"
+    export CLAUDE_CODE_SUBAGENT_MODEL='glm-free'
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1000000}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    command "$claude_bin" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
   )
 }
 
@@ -1369,7 +1338,7 @@ Available cc-vendor-bridge functions:
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
-  ccp-free          → Isolated FCC OpenRouter Ox Alpha route on :18082, started on demand
+  ccp-free          → CLIProxyAPI free tier: GLM-5.3-Flash via cline2api (:8317, Cline account free quota)
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
