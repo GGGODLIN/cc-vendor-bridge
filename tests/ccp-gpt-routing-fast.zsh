@@ -102,9 +102,9 @@ assert_not_contains \
   "/model gpt-5.6-sol-fast"
 
 assert_contains \
-  "ccp-list explains Fast Opus routing" \
+  "ccp-list explains only the Fast Opus routing delta" \
   "$ccp_list_output" \
-  "FABLE+OPUS→sol / SONNET+HAIKU→luna(max)"
+  "Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol"
 
 if (( ${+functions[ccp-gpt-fast]} )); then
   ccp-gpt() {
