@@ -1319,6 +1319,59 @@ ccp-free() {
   )
 }
 
+ccp-mix-gpt() {
+  # Main = GPT-5.6 Sol (Codex) via CLIProxyAPI; all other tiers → free(max) chain
+  # (glm-5.3-flash → ds-v4-flash → minimax-m3, failover by CLIProxyAPI fill-first)
+  local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
+  local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
+  local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
+  local keys_file="${CCP_FREE_KEYS_FILE:-$HOME/.cli-proxy-api/keys.env}"
+  local claude_bin="${CCP_FREE_CLAUDE_BIN:-claude}"
+  local relay_service='com.philip.cli-proxy-api'
+
+  if [[ ! -f "$keys_file" ]]; then
+    print -P "%F{red}[ccp-mix-gpt] keys file is missing: $keys_file%f" >&2
+    return 1
+  fi
+
+  if ! "$nc_bin" -z 127.0.0.1 8317 2>/dev/null; then
+    echo "[ccp-mix-gpt] relay not listening, kickstarting launchd service..." >&2
+    "$launchctl_bin" kickstart "gui/$UID/$relay_service" >/dev/null 2>&1
+    local i=0
+    while (( i < 50 )); do
+      "$nc_bin" -z 127.0.0.1 8317 2>/dev/null && break
+      "$sleep_bin" 0.1
+      ((i++))
+    done
+    if (( i >= 50 )); then
+      print -P "%F{red}[ccp-mix-gpt] relay did not become ready in 5s — check ~/.cli-proxy-api/logs/%f" >&2
+      return 1
+    fi
+  fi
+  (
+    source "$keys_file"
+    if [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
+      print -P "%F{red}[ccp-mix-gpt] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
+      exit 1
+    fi
+    unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
+    export CC_VENDOR=mix
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gpt-5.6-sol}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL='gpt-5.6-sol'
+    export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
+    export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
+    export CLAUDE_CODE_SUBAGENT_MODEL='free(max)'
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-360000}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
+    command "$claude_bin" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+  )
+}
+
 # ===== Helper: list available functions =====
 ccp-list() {
   cat <<EOF
@@ -1345,6 +1398,9 @@ Available cc-vendor-bridge functions:
   ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (FABLE→sol / OPUS+SONNET+HAIKU→luna(max),
                       Sol effort xhigh / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
+  ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-5.6-sol, OPUS/SONNET/HAIKU+subagents→free(max)
+                      (= glm-5.3-flash → ds-v4-flash → minimax-m3:free failover chain, :8317)
+                      360K context window (free-pool safe)
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol;
                       priority service tier for all GPT-5.6 requests
   ccp-gpt-smart     → All model slots forced to gpt-5.6-sol on the Standard service tier
