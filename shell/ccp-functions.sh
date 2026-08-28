@@ -1364,7 +1364,7 @@ ccp-mix-gpt() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
     export CLAUDE_CODE_SUBAGENT_MODEL='free(max)'
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-360000}
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-480000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
@@ -1400,7 +1400,7 @@ Available cc-vendor-bridge functions:
                       concurrency 3, 1M context, tool search off)
   ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-5.6-sol, OPUS/SONNET/HAIKU+subagents→free(max)
                       (= glm-5.3-flash → ds-v4-flash → minimax-m3:free failover chain, :8317)
-                      360K context window (free-pool safe)
+                      480K context window (probed: glm-5.3-flash ≥520K, minimax-m3 hard cap 524,288)
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol;
                       priority service tier for all GPT-5.6 requests
   ccp-gpt-smart     → All model slots forced to gpt-5.6-sol on the Standard service tier
