@@ -1309,11 +1309,6 @@ ccp-free-whoami() {
     return 0
   fi
 
-  if [[ ! -r "$accounts_file" || ! -r "$request_log_file" ]]; then
-    print -P "%F{yellow}[$caller] 無法查詢免費池狀態（cline2api status data unavailable）%f" >&2
-    return 0
-  fi
-
   local summary
   summary=$(jq -nr \
     --slurpfile state "$accounts_file" \
@@ -1321,10 +1316,10 @@ ccp-free-whoami() {
     --arg now "$now" \
     --arg since "$since" '
       def accounts: ($state[0].accounts // []);
-      def model_accounts($model):
+      def active_accounts:
         [accounts[] | select((.status // "") == "active")];
       def available($model):
-        [model_accounts($model)[]
+        [active_accounts[]
           | select((((.modelCooldowns // {})[$model] // "")[0:19]) as $until
             | ($until == "" or $until <= $now))];
       def normalize_model:
@@ -1337,9 +1332,8 @@ ccp-free-whoami() {
         | sort_by(.finishedAt)
         | last // {}) as $recent
       | [
-          (model_accounts("z-ai/glm-5.3-flash") | length),
+          (active_accounts | length),
           (available("z-ai/glm-5.3-flash") | length),
-          (model_accounts("deepseek/deepseek-v4-flash") | length),
           (available("deepseek/deepseek-v4-flash") | length),
           ($recent.normalized_model // ""),
           (if ($recent | has("completed")) then ($recent.completed | tostring) else "" end)
@@ -1350,8 +1344,8 @@ ccp-free-whoami() {
     return 0
   }
 
-  local glm_total glm_available ds_total ds_available recent_model recent_completed
-  IFS=$'\t' read -r glm_total glm_available ds_total ds_available recent_model recent_completed <<< "$summary"
+  local account_total glm_available ds_available recent_model recent_completed
+  IFS=$'\t' read -r account_total glm_available ds_available recent_model recent_completed <<< "$summary"
   local recent_failed=0
   if [[ "$recent_completed" == "false" ]]; then
     recent_failed=1
@@ -1365,15 +1359,15 @@ ccp-free-whoami() {
   local primary_glm=0
   if [[ "$recent_completed" == "true" && "$recent_model" == "z-ai/glm-5.3-flash" ]] && (( glm_available > 0 )); then
     primary_glm=1
-    print -P "%F{green}[$caller] 服務中：GLM 帳號池（free(max)）— ${glm_available}/${glm_total} 帳號可用%f" >&2
+    print -P "%F{green}[$caller] 服務中：GLM 帳號池（free(max)）— ${glm_available}/${account_total} 帳號可用%f" >&2
   elif [[ "$recent_completed" == "true" && "$recent_model" == "deepseek/deepseek-v4-flash" ]] && (( ds_available > 0 )); then
     print -P "%F{green}[$caller] 服務中：DeepSeek fallback（free(max)）— 最近成功來源%f" >&2
   elif (( glm_available > 0 )); then
     primary_glm=1
     if (( recent_failed )); then
-      print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 近期失敗後仍有 ${glm_available}/${glm_total} 帳號可用%f" >&2
+      print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 近期失敗後仍有 ${glm_available}/${account_total} 帳號可用%f" >&2
     else
-      print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 無近期流量，${glm_available}/${glm_total} 帳號可用%f" >&2
+      print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 無近期流量，${glm_available}/${account_total} 帳號可用%f" >&2
     fi
   elif (( ds_available > 0 )); then
     print -P "%F{yellow}[$caller] 預計切換：DeepSeek — GLM 帳號池目前不可用%f" >&2
@@ -1383,14 +1377,14 @@ ccp-free-whoami() {
 
   if (( primary_glm )); then
     if (( ds_available > 0 )); then
-      print -P "[$caller] 備援待命：DeepSeek — ${ds_available}/${ds_total} 帳號可用" >&2
+      print -P "[$caller] 備援待命：DeepSeek — ${ds_available}/${account_total} 帳號可用" >&2
     else
       print -P "%F{yellow}[$caller] ⚠️  DeepSeek 備援目前不可用%f" >&2
     fi
   fi
 
-  if (( glm_total > glm_available )); then
-    print -P "%F{yellow}[$caller] ⚠️  GLM 帳號池：${glm_available}/${glm_total} 可用，其餘 cooldown／daily limit%f" >&2
+  if (( account_total > glm_available )); then
+    print -P "%F{yellow}[$caller] ⚠️  GLM 帳號池：${glm_available}/${account_total} 可用，其餘 cooldown／daily limit%f" >&2
   fi
 
   if [[ "$freellmapi_state" == "disabled" ]]; then

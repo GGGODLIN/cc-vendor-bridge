@@ -120,11 +120,7 @@ setup_fixture() {
       "refreshToken": "REFRESH-CANARY-ALPHA",
       "metadata": {"secret": "NESTED-CANARY-ALPHA"},
       "status": "active",
-      "modelCooldowns": {},
-      "modelStats": {
-        "z-ai/glm-5.3-flash": {"usageCount": 2},
-        "deepseek/deepseek-v4-flash": {"usageCount": 1}
-      }
+      "modelCooldowns": {}
     },
     {
       "accountId": "ACCOUNT-CANARY-BETA",
@@ -132,11 +128,7 @@ setup_fixture() {
       "refreshToken": "REFRESH-CANARY-BETA",
       "metadata": {"secret": "NESTED-CANARY-BETA"},
       "status": "active",
-      "modelCooldowns": {},
-      "modelStats": {
-        "z-ai/glm-5.3-flash": {"usageCount": 2},
-        "deepseek/deepseek-v4-flash": {"usageCount": 1}
-      }
+      "modelCooldowns": {}
     },
     {
       "accountId": "ACCOUNT-CANARY-GAMMA",
