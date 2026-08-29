@@ -95,4 +95,27 @@
 - `2026-08-29T14:42:15.339333+00:00` `Y2` focused verification: pass。Missing／unreadable／invalid status data use the same yellow non-blocking jq failure path；both wrapper failure fixtures still invoke fake Claude。
 - `2026-08-29T14:42:15.339333+00:00` `Y3` focused verification: pass。Unused fixture `modelStats` removed；secret canaries、cooldowns、active-account eligibility and every status variant remain covered。
 - Focused suite: `ccp-free-wrapper.test.zsh` PASS；Zsh syntax PASS；`git diff --check` PASS。
-- stable commit: pending。
+- stable commit: `364f6f984ea3885648611494d05593f05f521fd8`（`refactor: simplify free pool status`）。
+
+### Targeted rechecks
+
+- `Y1`: pass on `364f6f984ea3885648611494d05593f05f521fd8`；committed helper has one `active_accounts` total and no `model_accounts` duplication。
+- `Y2`: pass on `364f6f984ea3885648611494d05593f05f521fd8`；committed helper has no readable-file precheck and retains one non-blocking jq failure path。
+- `Y3`: pass on `364f6f984ea3885648611494d05593f05f521fd8`；committed wrapper fixture contains no `modelStats`。
+
+### Final suite
+
+- executed_at: `2026-08-29T14:43:56.866934+00:00`
+- implementation_head_sha: `364f6f984ea3885648611494d05593f05f521fd8`
+- result: PASS。
+- evidence: four repo contract tests、Zsh syntax and `git diff --check` completed under `set -euo pipefail`；terminal marker `FINAL_SUITE=PASS`。
+
+### Final summary
+
+- Run status: PASS
+- Axis status: scope `completed`；yagni `completed`。
+- Scope findings: none。
+- YAGNI: `Y1`–`Y3` accepted and targeted rechecks passed；`Y4` disputed with evidence。
+- Repair obligations: all complete。
+- Silent skip: `0` — selected axes、accepted obligations、targeted rechecks and final suite all have events。
+- Production/test code was unchanged after `364f6f984ea3885648611494d05593f05f521fd8`；subsequent change is review metadata only。
