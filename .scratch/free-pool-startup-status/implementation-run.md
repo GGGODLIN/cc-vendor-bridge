@@ -14,3 +14,18 @@
 - Live no-op smoke: `ccp-free` 與 `ccp-mix-gpt` 都成功；觀察到 GLM `6/13`、DeepSeek `10/13`、FreeLLMAPI disabled。
 - Review fixes: 6 個會造成錯報的 findings 已修；1 個 status path 推測因現況與 override 已覆蓋而 skipped；security canary test gap 已修。
 - Post-review suite: `PASS`（4 個 repo contract tests、Zsh syntax、`git diff --check`）。
+
+## Post-implementation gates
+
+- review_implement: `PASS`；report `/.scratch/free-pool-startup-status/review-implement.md`
+- review_implementation_head_sha: `364f6f984ea3885648611494d05593f05f521fd8`
+- architecture_visual: `not-applicable`
+- architecture_reason: 只新增 wrapper 啟動 stderr 診斷與 fixture；沒有新增／移除／改道 component、service、process 或 protocol connection，routing 與 provider ownership 不變。
+- architecture_diff_evidence: `shell/ccp-functions.sh` status helper／call sites、`tests/ccp-free-wrapper.test.zsh` fixture；review metadata commit 後 HEAD `bb16cdd`。
+
+## Closeout
+
+- repo_convention: repo has no `openspec/`；no archive step。
+- tdd_manifest_consume: `PASS`；`status=started`、`consumed=true`、`required_count=2`、`ticket_count=2`。
+- final_suite: `PASS` on implementation head `364f6f984ea3885648611494d05593f05f521fd8`。
+- post_suite_commits: review／closeout metadata only；production and test code unchanged。
