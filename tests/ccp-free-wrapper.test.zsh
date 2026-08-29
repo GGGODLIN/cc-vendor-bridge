@@ -67,6 +67,25 @@ assert_output_contains() {
   fi
 }
 
+assert_output_not_contains() {
+  local label="$1" needle="$2"
+  if ! /usr/bin/grep -Fq -- "$needle" "$FIXTURE/output.log"; then
+    ok "$label"
+  else
+    bad "$label"
+  fi
+}
+
+assert_output_count() {
+  local label="$1" needle="$2" expected="$3" actual
+  actual=$(/usr/bin/grep -Fc -- "$needle" "$FIXTURE/output.log" || true)
+  if [[ "$actual" == "$expected" ]]; then
+    ok "$label"
+  else
+    bad "$label"
+  fi
+}
+
 assert_line_count() {
   local label="$1" path="$2" expected="$3" actual
   actual=$(/usr/bin/wc -l < "$path" | /usr/bin/tr -d ' ')
@@ -92,6 +111,57 @@ setup_fixture() {
     printf 'CLIPROXY_KEY_ADMIN=sk-admin-test\n'
     printf 'CLIPROXY_KEY_CC=%s\n' "$CC_KEY"
   } > "$FIXTURE/keys.env"
+  cat > "$FIXTURE/accounts.json" <<'JSON'
+{
+  "accounts": [
+    {
+      "accountId": "ACCOUNT-CANARY-ALPHA",
+      "email": "alpha@example.test",
+      "refreshToken": "REFRESH-CANARY-ALPHA",
+      "metadata": {"secret": "NESTED-CANARY-ALPHA"},
+      "status": "active",
+      "modelCooldowns": {}
+    },
+    {
+      "accountId": "ACCOUNT-CANARY-BETA",
+      "email": "beta@example.test",
+      "refreshToken": "REFRESH-CANARY-BETA",
+      "metadata": {"secret": "NESTED-CANARY-BETA"},
+      "status": "active",
+      "modelCooldowns": {}
+    },
+    {
+      "accountId": "ACCOUNT-CANARY-GAMMA",
+      "email": "gamma@example.test",
+      "refreshToken": "REFRESH-CANARY-GAMMA",
+      "status": "active",
+      "modelCooldowns": {}
+    }
+  ]
+}
+JSON
+  cat > "$FIXTURE/request-logs.json" <<'JSON'
+[
+  {
+    "completed": true,
+    "finishedAt": "2026-08-29T20:30:00+08:00",
+    "model": "z-ai/glm-5.3-flash"
+  }
+]
+JSON
+  cat > "$FIXTURE/config.yaml" <<'YAML'
+openai-compatibility:
+  - name: "cline-free-proxy"
+    disabled: false
+    models:
+      - name: "free"
+        alias: "free"
+  - name: "freellmapi"
+    disabled: true
+    models:
+      - name: "auto"
+        alias: "free"
+YAML
   write_executable "$FIXTURE/bin/nc" '#!/bin/sh
 if [ -f "$CCP_FREE_READY_FILE" ]; then
   exit 0
@@ -139,6 +209,7 @@ exit 0'
 invoke_wrapper() {
   local mode="$1"
   local outer_model="${2-}"
+  local wrapper="${3:-ccp-free}"
   (
     export CCP_FREE_LAUNCH_MODE="$mode"
     export CCP_FREE_KEYS_FILE="$FIXTURE/keys.env"
@@ -150,6 +221,11 @@ invoke_wrapper() {
     export CCP_FREE_LAUNCH_LOG="$FIXTURE/launch.log"
     export CCP_FREE_SLEEP_LOG="$FIXTURE/sleep.log"
     export CCP_FREE_CAPTURE_FILE="$FIXTURE/capture.log"
+    export CCP_FREE_ACCOUNTS_FILE="$FIXTURE/accounts.json"
+    export CCP_FREE_REQUEST_LOG_FILE="$FIXTURE/request-logs.json"
+    export CCP_FREE_CONFIG_FILE="$FIXTURE/config.yaml"
+    export CCP_FREE_NOW='2026-08-29T21:00:00'
+    export CCP_FREE_SINCE='2026-08-29T20:00:00'
     export ANTHROPIC_API_KEY='outer-paid-key'
     export ANTHROPIC_DEFAULT_FABLE_MODEL='outer-fable-model'
     export ANTHROPIC_DEFAULT_OPUS_MODEL='outer-opus-model'
@@ -163,7 +239,7 @@ invoke_wrapper() {
       export ANTHROPIC_MODEL="$outer_model"
     fi
     source "$SRC"
-    ccp-free --print probe
+    "$wrapper" --print probe
   ) > "$FIXTURE/output.log" 2>&1
   WRAPPER_STATUS=$?
 }
@@ -247,6 +323,19 @@ setup_fixture
 : > "$FIXTURE/ready"
 invoke_wrapper ready
 assert_status 'pinned invocation returns success' 0
+assert_output_contains 'free pool reports observed GLM service' '[ccp-free] 服務中：GLM 帳號池（free(max)）'
+assert_output_contains 'free pool counts unused active GLM accounts' '3/3 帳號可用'
+assert_output_contains 'free pool reports DeepSeek standby' '[ccp-free] 備援待命：DeepSeek — 3/3 帳號可用'
+assert_output_contains 'free pool reports disabled FreeLLMAPI' '[ccp-free] FreeLLMAPI：已停用'
+assert_output_not_contains 'healthy free pool omits warning marker' '⚠️'
+assert_output_not_contains 'free pool output omits client key' "$CC_KEY"
+assert_output_not_contains 'free pool output omits management key' 'mgmt-test'
+assert_output_not_contains 'free pool output omits account email' 'alpha@example.test'
+assert_output_not_contains 'free pool output omits secondary email' 'beta@example.test'
+assert_output_not_contains 'free pool output omits unused account email' 'gamma@example.test'
+assert_output_not_contains 'free pool output omits refresh token canary' 'REFRESH-CANARY'
+assert_output_not_contains 'free pool output omits account ID canary' 'ACCOUNT-CANARY'
+assert_output_not_contains 'free pool output omits nested canary' 'NESTED-CANARY'
 assert_file_line 'vendor marker is process-local free' "$FIXTURE/capture.log" 'cc_vendor=free'
 assert_file_line 'base URL comes from keys.env' "$FIXTURE/capture.log" "base_url=$CC_URL"
 assert_file_line 'auth token is the CC relay key' "$FIXTURE/capture.log" "auth_token=$CC_KEY"
@@ -270,6 +359,167 @@ assert_file_line 'CLI model flag pins free(max)' "$FIXTURE/capture.log" "arg2=$M
 assert_file_line 'WebSearch is disallowed' "$FIXTURE/capture.log" 'arg3=--disallowed-tools'
 assert_file_line 'WebSearch tool name follows' "$FIXTURE/capture.log" 'arg4=WebSearch'
 assert_file_line 'caller arguments are preserved' "$FIXTURE/capture.log" 'arg5=--print'
+teardown_fixture
+
+print -r -- '── free pool status variants'
+setup_fixture
+: > "$FIXTURE/ready"
+print -r -- '[]' > "$FIXTURE/request-logs.json"
+invoke_wrapper ready
+assert_status 'idle free pool still launches' 0
+assert_output_contains 'idle free pool reports configured intent' '[ccp-free] 預計使用：GLM 帳號池（free(max)）— 無近期流量'
+assert_file_line 'idle free pool invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+jq '.accounts[1].modelCooldowns["z-ai/glm-5.3-flash"] = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
+invoke_wrapper ready
+assert_status 'partial GLM cooldown still launches' 0
+assert_output_contains 'partial GLM cooldown reports available count' '[ccp-free] ⚠️  GLM 帳號池：2/3 可用，其餘 cooldown／daily limit'
+assert_file_line 'partial GLM cooldown invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
+invoke_wrapper ready
+assert_status 'stale GLM success still launches' 0
+assert_output_not_contains 'stale GLM success does not override exhausted pool' '[ccp-free] 服務中：GLM 帳號池'
+assert_output_contains 'stale GLM success predicts DeepSeek' '[ccp-free] 預計切換：DeepSeek — GLM 帳號池目前不可用'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+cat > "$FIXTURE/request-logs.json" <<'JSON'
+[
+  {
+    "completed": false,
+    "finishedAt": "2026-08-29T20:45:00+08:00",
+    "model": "z-ai/glm-5.3-flash"
+  }
+]
+JSON
+invoke_wrapper ready
+assert_status 'recent upstream failure still launches' 0
+assert_output_contains 'recent upstream failure is visible' '[ccp-free] ⚠️  最近請求失敗：GLM'
+assert_file_line 'recent upstream failure invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+cat > "$FIXTURE/request-logs.json" <<'JSON'
+[
+  {
+    "completed": true,
+    "finishedAt": "2026-08-29T20:10:00+08:00",
+    "model": "z-ai/glm-5.3-flash"
+  },
+  {
+    "completed": true,
+    "finishedAt": "2026-08-29T20:20:00+08:00",
+    "model": "z-ai/glm-5.3-flash(xhigh)"
+  },
+  {
+    "completed": true,
+    "finishedAt": "2026-08-29T20:30:00+08:00",
+    "model": "poolside/laguna-s-2.1:free"
+  }
+]
+JSON
+invoke_wrapper ready
+assert_status 'unrelated recent model still launches' 0
+assert_output_contains 'unrelated model does not hide normalized GLM success' '[ccp-free] 服務中：GLM 帳號池（free(max)）'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+cat > "$FIXTURE/config.yaml" <<'YAML'
+openai-compatibility:
+  - name: "cline-free-proxy"
+    disabled: true
+    models:
+      - name: "free"
+        alias: "free"
+  - name: "freellmapi"
+    disabled: true
+    models:
+      - name: "auto"
+        alias: "free"
+YAML
+invoke_wrapper ready
+assert_status 'disabled free route still launches' 0
+assert_output_contains 'disabled free route reports unavailable route' '[ccp-free] ⚠️  免費池 route 目前停用'
+assert_output_not_contains 'disabled free route does not claim GLM service' '[ccp-free] 服務中：GLM 帳號池'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+print -r -- '[]' > "$FIXTURE/request-logs.json"
+jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
+invoke_wrapper ready
+assert_status 'GLM exhaustion still launches' 0
+assert_output_contains 'GLM exhaustion predicts DeepSeek fallback' '[ccp-free] 預計切換：DeepSeek — GLM 帳號池目前不可用'
+assert_file_line 'GLM exhaustion invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+print -r -- '[]' > "$FIXTURE/request-logs.json"
+jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00" | (.accounts[].modelCooldowns["deepseek/deepseek-v4-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
+invoke_wrapper ready
+assert_status 'empty free pool still launches' 0
+assert_output_contains 'empty free pool reports no usable source' '[ccp-free] ⚠️  免費池目前沒有可用來源'
+assert_output_contains 'empty free pool prints diagnostic path' '細節排查：ccp-free-whoami / tail -f ~/.cline2api/service.log'
+assert_file_line 'empty free pool invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+/bin/rm "$FIXTURE/accounts.json"
+invoke_wrapper ready
+assert_status 'missing status data still launches' 0
+assert_output_contains 'missing status data prints yellow diagnostic' '[ccp-free] 無法查詢免費池狀態'
+assert_file_line 'missing status data invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+print -r -- '── ccp-mix-gpt startup summary'
+setup_fixture
+: > "$FIXTURE/ready"
+invoke_wrapper ready '' ccp-mix-gpt
+assert_status 'mixed wrapper returns success' 0
+assert_output_contains 'mixed wrapper reports GPT main route' '[ccp-mix-gpt] Main：GPT-5.6 Sol'
+assert_output_contains 'mixed wrapper reuses free pool summary' '[ccp-mix-gpt] 服務中：GLM 帳號池（free(max)）'
+assert_output_count 'mixed wrapper reports GPT main once' '[ccp-mix-gpt] Main：GPT-5.6 Sol' 1
+assert_output_count 'mixed wrapper queries free status once' '[ccp-mix-gpt] 服務中：GLM 帳號池（free(max)）' 1
+assert_output_not_contains 'mixed wrapper output omits client key' "$CC_KEY"
+assert_output_not_contains 'mixed wrapper output omits account email' 'alpha@example.test'
+assert_output_not_contains 'mixed wrapper output omits refresh token canary' 'REFRESH-CANARY'
+assert_output_not_contains 'mixed wrapper output omits account ID canary' 'ACCOUNT-CANARY'
+assert_output_not_contains 'mixed wrapper output omits nested canary' 'NESTED-CANARY'
+assert_file_line 'mixed wrapper keeps GPT main model' "$FIXTURE/capture.log" 'model=gpt-5.6-sol'
+assert_file_line 'mixed wrapper keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
+assert_file_line 'mixed wrapper keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+/bin/rm "$FIXTURE/accounts.json"
+invoke_wrapper ready '' ccp-mix-gpt
+assert_status 'mixed wrapper survives status failure' 0
+assert_output_contains 'mixed wrapper prefixes status failure' '[ccp-mix-gpt] 無法查詢免費池狀態'
+assert_file_line 'mixed status failure preserves GPT main' "$FIXTURE/capture.log" 'model=gpt-5.6-sol'
+assert_file_line 'mixed status failure still invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+invoke_wrapper ready ds-free ccp-mix-gpt
+assert_status 'mixed main override returns success' 0
+assert_output_contains 'mixed main summary follows override' '[ccp-mix-gpt] Main：ds-free'
+assert_output_not_contains 'mixed main summary does not claim default Sol' '[ccp-mix-gpt] Main：GPT-5.6 Sol'
+assert_file_line 'mixed main override reaches claude' "$FIXTURE/capture.log" 'model=ds-free'
+assert_file_line 'mixed main override preserves free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 teardown_fixture
 
 print -r -- '── outer model override passthrough'

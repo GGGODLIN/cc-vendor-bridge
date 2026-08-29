@@ -1264,6 +1264,141 @@ ccp-gemini-flash() {
   )
 }
 
+ccp-free-whoami() {
+  local caller="${1:-ccp-free}"
+  local accounts_file="${CCP_FREE_ACCOUNTS_FILE:-$HOME/.cline2api/.cline-accounts.json}"
+  local request_log_file="${CCP_FREE_REQUEST_LOG_FILE:-$HOME/.cline2api/.cline-request-logs.json}"
+  local config_file="${CCP_FREE_CONFIG_FILE:-$HOME/.cli-proxy-api/config.yaml}"
+  local now="${CCP_FREE_NOW:-$(date '+%Y-%m-%dT%H:%M:%S')}"
+  local since="${CCP_FREE_SINCE:-$(date -v-1H '+%Y-%m-%dT%H:%M:%S')}"
+  local route_states="unknown\tabsent"
+
+  if [[ -r "$config_file" ]]; then
+    route_states=$(awk '
+      function commit() {
+        if (name == "cline-free-proxy") cline = disabled ? "disabled" : (has_free ? "enabled" : "missing-free")
+        if (name == "freellmapi") freel = disabled ? "disabled" : (has_free ? "enabled" : "missing-free")
+      }
+      BEGIN { name = ""; disabled = 0; has_free = 0; cline = "absent"; freel = "absent" }
+      /^  - name:/ {
+        commit()
+        line = $0
+        sub(/^.*name:[[:space:]]*"?/, "", line)
+        sub(/"?[[:space:]]*$/, "", line)
+        name = line
+        disabled = 0
+        has_free = 0
+        next
+      }
+      name != "" && /^[[:space:]]+disabled:[[:space:]]+true/ { disabled = 1 }
+      name != "" && /^[[:space:]]+alias:[[:space:]]*"?free"?[[:space:]]*$/ { has_free = 1 }
+      END { commit(); print cline "\t" freel }
+    ' "$config_file" 2>/dev/null)
+  fi
+
+  local cline_route_state freellmapi_state
+  IFS=$'\t' read -r cline_route_state freellmapi_state <<< "$route_states"
+  if [[ "$cline_route_state" != "enabled" ]]; then
+    if [[ "$freellmapi_state" == "enabled" ]]; then
+      print -P "%F{yellow}[$caller] 預計切換：FreeLLMAPI — cline-free-proxy route unavailable%f" >&2
+    else
+      print -P "%F{red}[$caller] ⚠️  免費池 route 目前停用%f" >&2
+    fi
+    [[ "$freellmapi_state" == "disabled" ]] && print -P "[$caller] FreeLLMAPI：已停用，不在目前路由" >&2
+    print -P "%F{yellow}          細節排查：ccp-free-whoami / tail -f ~/.cline2api/service.log%f" >&2
+    return 0
+  fi
+
+  local summary
+  summary=$(jq -nr \
+    --slurpfile state "$accounts_file" \
+    --slurpfile requests "$request_log_file" \
+    --arg now "$now" \
+    --arg since "$since" '
+      def accounts: ($state[0].accounts // []);
+      def active_accounts:
+        [accounts[] | select((.status // "") == "active")];
+      def available($model):
+        [active_accounts[]
+          | select((((.modelCooldowns // {})[$model] // "")[0:19]) as $until
+            | ($until == "" or $until <= $now))];
+      def normalize_model:
+        sub("\\([^()]*\\)$"; "");
+      (($requests[0] // [])
+        | map(. + {normalized_model: ((.model // "") | normalize_model)})
+        | map(select(
+            ((.finishedAt // "")[0:19] >= $since)
+            and (.normalized_model == "z-ai/glm-5.3-flash" or .normalized_model == "deepseek/deepseek-v4-flash")))
+        | sort_by(.finishedAt)
+        | last // {}) as $recent
+      | [
+          (active_accounts | length),
+          (available("z-ai/glm-5.3-flash") | length),
+          (available("deepseek/deepseek-v4-flash") | length),
+          ($recent.normalized_model // ""),
+          (if ($recent | has("completed")) then ($recent.completed | tostring) else "" end)
+        ]
+      | @tsv
+    ' 2>/dev/null) || {
+    print -P "%F{yellow}[$caller] 無法查詢免費池狀態（invalid cline2api status data）%f" >&2
+    return 0
+  }
+
+  local account_total glm_available ds_available recent_model recent_completed
+  IFS=$'\t' read -r account_total glm_available ds_available recent_model recent_completed <<< "$summary"
+  local recent_failed=0
+  if [[ "$recent_completed" == "false" ]]; then
+    recent_failed=1
+    if [[ "$recent_model" == "z-ai/glm-5.3-flash" ]]; then
+      print -P "%F{yellow}[$caller] ⚠️  最近請求失敗：GLM%f" >&2
+    elif [[ "$recent_model" == "deepseek/deepseek-v4-flash" ]]; then
+      print -P "%F{yellow}[$caller] ⚠️  最近請求失敗：DeepSeek%f" >&2
+    fi
+  fi
+
+  local primary_glm=0
+  if [[ "$recent_completed" == "true" && "$recent_model" == "z-ai/glm-5.3-flash" ]] && (( glm_available > 0 )); then
+    primary_glm=1
+    print -P "%F{green}[$caller] 服務中：GLM 帳號池（free(max)）— ${glm_available}/${account_total} 帳號可用%f" >&2
+  elif [[ "$recent_completed" == "true" && "$recent_model" == "deepseek/deepseek-v4-flash" ]] && (( ds_available > 0 )); then
+    print -P "%F{green}[$caller] 服務中：DeepSeek fallback（free(max)）— 最近成功來源%f" >&2
+  elif (( glm_available > 0 )); then
+    primary_glm=1
+    if (( recent_failed )); then
+      print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 近期失敗後仍有 ${glm_available}/${account_total} 帳號可用%f" >&2
+    else
+      print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 無近期流量，${glm_available}/${account_total} 帳號可用%f" >&2
+    fi
+  elif (( ds_available > 0 )); then
+    print -P "%F{yellow}[$caller] 預計切換：DeepSeek — GLM 帳號池目前不可用%f" >&2
+  else
+    print -P "%F{red}[$caller] ⚠️  免費池目前沒有可用來源%f" >&2
+  fi
+
+  if (( primary_glm )); then
+    if (( ds_available > 0 )); then
+      print -P "[$caller] 備援待命：DeepSeek — ${ds_available}/${account_total} 帳號可用" >&2
+    else
+      print -P "%F{yellow}[$caller] ⚠️  DeepSeek 備援目前不可用%f" >&2
+    fi
+  fi
+
+  if (( account_total > glm_available )); then
+    print -P "%F{yellow}[$caller] ⚠️  GLM 帳號池：${glm_available}/${account_total} 可用，其餘 cooldown／daily limit%f" >&2
+  fi
+
+  if [[ "$freellmapi_state" == "disabled" ]]; then
+    print -P "[$caller] FreeLLMAPI：已停用，不在目前路由" >&2
+  elif [[ "$freellmapi_state" == "enabled" ]]; then
+    print -P "%F{yellow}[$caller] FreeLLMAPI：已設定，健康未知%f" >&2
+  fi
+
+  if (( recent_failed || glm_available == 0 || ds_available == 0 )); then
+    print -P "%F{yellow}          細節排查：ccp-free-whoami / tail -f ~/.cline2api/service.log%f" >&2
+  fi
+  return 0
+}
+
 ccp-free() {
   # Free tier via CLIProxyAPI free(max) chain: GLM account pool first; DeepSeek (DS) only when the whole GLM pool is unavailable
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
@@ -1298,6 +1433,7 @@ ccp-free() {
       print -P "%F{red}[ccp-free] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
       exit 1
     fi
+    ccp-free-whoami ccp-free
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
     export CC_VENDOR=free
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
@@ -1354,11 +1490,16 @@ ccp-mix-gpt() {
       print -P "%F{red}[ccp-mix-gpt] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
       exit 1
     fi
+    local main_model="${ANTHROPIC_MODEL:-gpt-5.6-sol}"
+    local main_label="$main_model"
+    [[ "$main_model" == "gpt-5.6-sol" ]] && main_label="GPT-5.6 Sol"
+    print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
+    ccp-free-whoami ccp-mix-gpt
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
     export CC_VENDOR=mix
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gpt-5.6-sol}"
+    export ANTHROPIC_MODEL="$main_model"
     export ANTHROPIC_DEFAULT_FABLE_MODEL='gpt-5.6-sol'
     export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
