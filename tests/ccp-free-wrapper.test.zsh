@@ -1,12 +1,12 @@
 #!/usr/bin/env zsh
 # 本檔在契約測試底下：改完必跑（從 repo root）：zsh tests/ccp-free-wrapper.test.zsh
-# 契約（2026-08-28 改版）：ccp-free 走 CLIProxyAPI :8317 免費層（glm-free，經 cline2api → Cline 帳號），
-# 不再依賴 FCC server（:18082 / com.gggodlin.ccp-free-fcc 已退役）。
+# 契約（2026-08-29 改版）：ccp-free 與 ccp-mix-gpt 共用 CLIProxyAPI :8317 的 free(max) chain：
+# GLM account pool 優先，整池不可用才切到 DeepSeek；offline FreeLLMAPI 不屬於有效備援。
 set -u
 
 ROOT="${0:A:h:h}"
 SRC="$ROOT/shell/ccp-functions.sh"
-MODEL='glm-free'
+MODEL='free(max)'
 CC_KEY='test-cc-key'
 CC_URL='http://127.0.0.1:8317'
 FAILURES=0
@@ -99,6 +99,9 @@ fi
 exit 1'
   write_executable "$FIXTURE/bin/launchctl" '#!/bin/sh
 printf "%s\n" "$*" >> "$CCP_FREE_LAUNCH_LOG"
+if [ "${CCP_FREE_LAUNCH_MODE:-success}" = ready ]; then
+  : > "$CCP_FREE_READY_FILE"
+fi
 exit 0'
   write_executable "$FIXTURE/bin/sleep" '#!/bin/sh
 printf "slept\n" >> "$CCP_FREE_SLEEP_LOG"
@@ -116,6 +119,8 @@ exit 0'
   printf "sonnet_model=%s\n" "${ANTHROPIC_DEFAULT_SONNET_MODEL-}"
   printf "haiku_model=%s\n" "${ANTHROPIC_DEFAULT_HAIKU_MODEL-}"
   printf "custom_option=%s\n" "${ANTHROPIC_CUSTOM_MODEL_OPTION-}"
+  printf "custom_name=%s\n" "${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME-}"
+  printf "custom_description=%s\n" "${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION-}"
   printf "subagent_model=%s\n" "${CLAUDE_CODE_SUBAGENT_MODEL-}"
   printf "max_context_tokens=%s\n" "${CLAUDE_CODE_MAX_CONTEXT_TOKENS-}"
   printf "auto_compact_window=%s\n" "${CLAUDE_CODE_AUTO_COMPACT_WINDOW-}"
@@ -132,7 +137,10 @@ exit 0'
 }
 
 invoke_wrapper() {
+  local mode="$1"
+  local outer_model="${2-}"
   (
+    export CCP_FREE_LAUNCH_MODE="$mode"
     export CCP_FREE_KEYS_FILE="$FIXTURE/keys.env"
     export CCP_FREE_NC_BIN="$FIXTURE/bin/nc"
     export CCP_FREE_LAUNCHCTL_BIN="$FIXTURE/bin/launchctl"
@@ -148,8 +156,11 @@ invoke_wrapper() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL='outer-sonnet-model'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='outer-haiku-model'
     export CLAUDE_CODE_SUBAGENT_MODEL='outer-subagent-model'
-    if [[ -n "${CCP_FREE_OUTER_MODEL-}" ]]; then
-      export ANTHROPIC_MODEL="$CCP_FREE_OUTER_MODEL"
+    unset ANTHROPIC_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION ANTHROPIC_CUSTOM_MODEL_OPTION_NAME \
+      ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION CLAUDE_CODE_MAX_CONTEXT_TOKENS \
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW CLIPROXY_BASE_URL CLIPROXY_KEY_CC
+    if [[ -n "$outer_model" ]]; then
+      export ANTHROPIC_MODEL="$outer_model"
     fi
     source "$SRC"
     ccp-free --print probe
@@ -163,15 +174,26 @@ teardown_fixture() {
 }
 
 source "$SRC"
-if [[ "$(ccp-list)" == *'ccp-free'* ]]; then
+LIST_OUTPUT="$(ccp-list)"
+if [[ "$LIST_OUTPUT" == *'ccp-free'* ]]; then
   ok 'ccp-list exposes ccp-free'
 else
   bad 'ccp-list exposes ccp-free'
 fi
-if [[ "$(ccp-list)" == *'GLM-5.3-Flash'* ]]; then
-  ok 'ccp-list identifies GLM-5.3-Flash free tier'
+if [[ "$LIST_OUTPUT" == *'GLM-5.3-Flash account pool first'* ]]; then
+  ok 'ccp-list identifies the GLM account pool as first free tier'
 else
-  bad 'ccp-list identifies GLM-5.3-Flash free tier'
+  bad 'ccp-list identifies the GLM account pool as first free tier'
+fi
+if [[ "$LIST_OUTPUT" == *'DeepSeek (DS) only when the whole GLM pool is unavailable'* ]]; then
+  ok 'ccp-list identifies DeepSeek as whole-pool fallback'
+else
+  bad 'ccp-list identifies DeepSeek as whole-pool fallback'
+fi
+if [[ "$LIST_OUTPUT" != *'MiniMax'* && "$LIST_OUTPUT" != *'FreeLLMAPI'* ]]; then
+  ok 'ccp-list omits inactive free-chain fallbacks'
+else
+  bad 'ccp-list omits inactive free-chain fallbacks'
 fi
 
 print -r -- '── keys preflight'
@@ -194,6 +216,7 @@ teardown_fixture
 
 print -r -- '── relay discovery'
 setup_fixture
+: > "$FIXTURE/ready"
 invoke_wrapper ready
 assert_status 'ready relay returns success' 0
 assert_file_not_line 'ready relay does not kickstart' "$FIXTURE/launch.log" "kickstart gui/$UID/com.philip.cli-proxy-api"
@@ -228,20 +251,22 @@ assert_file_line 'vendor marker is process-local free' "$FIXTURE/capture.log" 'c
 assert_file_line 'base URL comes from keys.env' "$FIXTURE/capture.log" "base_url=$CC_URL"
 assert_file_line 'auth token is the CC relay key' "$FIXTURE/capture.log" "auth_token=$CC_KEY"
 assert_file_line 'Anthropic API key is removed' "$FIXTURE/capture.log" 'api_key='
-assert_file_line 'main model is glm-free' "$FIXTURE/capture.log" 'model=glm-free'
-assert_file_line 'FABLE model is hard-pinned glm-free' "$FIXTURE/capture.log" 'fable_model=glm-free'
-assert_file_line 'OPUS model is hard-pinned glm-free' "$FIXTURE/capture.log" 'opus_model=glm-free'
-assert_file_line 'SONNET model is hard-pinned glm-free' "$FIXTURE/capture.log" 'sonnet_model=glm-free'
-assert_file_line 'HAIKU model is hard-pinned glm-free' "$FIXTURE/capture.log" 'haiku_model=glm-free'
-assert_file_line 'custom thinking option is exposed' "$FIXTURE/capture.log" 'custom_option=glm-free(xhigh)'
-assert_file_line 'subagent model is hard-pinned glm-free' "$FIXTURE/capture.log" 'subagent_model=glm-free'
+assert_file_line 'main model is free(max)' "$FIXTURE/capture.log" "model=$MODEL"
+assert_file_line 'FABLE model is hard-pinned free(max)' "$FIXTURE/capture.log" "fable_model=$MODEL"
+assert_file_line 'OPUS model is hard-pinned free(max)' "$FIXTURE/capture.log" "opus_model=$MODEL"
+assert_file_line 'SONNET model is hard-pinned free(max)' "$FIXTURE/capture.log" "sonnet_model=$MODEL"
+assert_file_line 'HAIKU model is hard-pinned free(max)' "$FIXTURE/capture.log" "haiku_model=$MODEL"
+assert_file_line 'custom free-chain option is exposed' "$FIXTURE/capture.log" 'custom_option=free(max)'
+assert_file_line 'custom option names the GLM-to-DeepSeek chain' "$FIXTURE/capture.log" 'custom_name=Free chain (GLM pool → DeepSeek)'
+assert_file_line 'custom option describes whole-pool fallback' "$FIXTURE/capture.log" 'custom_description=GLM account pool first; DeepSeek (DS) only when the whole GLM pool is unavailable'
+assert_file_line 'subagent model is hard-pinned free(max)' "$FIXTURE/capture.log" "subagent_model=$MODEL"
 assert_file_line 'context window matches GLM metadata' "$FIXTURE/capture.log" 'max_context_tokens=1048576'
 assert_file_line 'auto compact requests the supported 1M window' "$FIXTURE/capture.log" 'auto_compact_window=1000000'
 assert_file_line 'outer compact disable is removed' "$FIXTURE/capture.log" 'disable_compact='
 assert_file_line 'paid fallback env is removed' "$FIXTURE/capture.log" 'anthropic_fallback='
 assert_file_line 'Claude Code fallback env is removed' "$FIXTURE/capture.log" 'claude_code_fallback='
 assert_file_line 'CLI model flag overrides settings' "$FIXTURE/capture.log" 'arg1=--model'
-assert_file_line 'CLI model flag pins glm-free' "$FIXTURE/capture.log" 'arg2=glm-free'
+assert_file_line 'CLI model flag pins free(max)' "$FIXTURE/capture.log" "arg2=$MODEL"
 assert_file_line 'WebSearch is disallowed' "$FIXTURE/capture.log" 'arg3=--disallowed-tools'
 assert_file_line 'WebSearch tool name follows' "$FIXTURE/capture.log" 'arg4=WebSearch'
 assert_file_line 'caller arguments are preserved' "$FIXTURE/capture.log" 'arg5=--print'
@@ -250,11 +275,11 @@ teardown_fixture
 print -r -- '── outer model override passthrough'
 setup_fixture
 : > "$FIXTURE/ready"
-CCP_FREE_OUTER_MODEL='ds-free' invoke_wrapper ready
+invoke_wrapper ready ds-free
 assert_status 'outer override returns success' 0
 assert_file_line 'outer model wins the main slot' "$FIXTURE/capture.log" 'model=ds-free'
 assert_file_line 'outer model wins the CLI flag' "$FIXTURE/capture.log" 'arg2=ds-free'
-assert_file_line 'vendor defaults still pin glm-free' "$FIXTURE/capture.log" 'fable_model=glm-free'
+assert_file_line 'vendor defaults still pin free(max)' "$FIXTURE/capture.log" "fable_model=$MODEL"
 teardown_fixture
 
 (( FAILURES == 0 ))

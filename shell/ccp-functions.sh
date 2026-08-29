@@ -1265,7 +1265,7 @@ ccp-gemini-flash() {
 }
 
 ccp-free() {
-  # Free tier via CLIProxyAPI → cline2api → Cline account (GLM-5.3-Flash, free quota)
+  # Free tier via CLIProxyAPI free(max) chain: GLM account pool first; DeepSeek (DS) only when the whole GLM pool is unavailable
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
@@ -1302,15 +1302,15 @@ ccp-free() {
     export CC_VENDOR=free
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-glm-free}"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL='glm-free'
-    export ANTHROPIC_DEFAULT_OPUS_MODEL='glm-free'
-    export ANTHROPIC_DEFAULT_SONNET_MODEL='glm-free'
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL='glm-free'
-    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-glm-free(xhigh)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-GLM 5.3 Flash xhigh}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Same GLM model with xhigh reasoning effort}"
-    export CLAUDE_CODE_SUBAGENT_MODEL='glm-free'
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-free(max)}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL='free(max)'
+    export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
+    export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
+    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-free(max)}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Free chain (GLM pool → DeepSeek)}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-GLM account pool first; DeepSeek (DS) only when the whole GLM pool is unavailable}"
+    export CLAUDE_CODE_SUBAGENT_MODEL='free(max)'
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1000000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
@@ -1321,7 +1321,7 @@ ccp-free() {
 
 ccp-mix-gpt() {
   # Main = GPT-5.6 Sol (Codex) via CLIProxyAPI; all other tiers → free(max) chain
-  # (glm-5.3-flash → ds-v4-flash → minimax-m3, failover by CLIProxyAPI fill-first)
+  # (GLM account pool first; DeepSeek (DS) only when the whole GLM pool is unavailable)
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
@@ -1391,7 +1391,7 @@ Available cc-vendor-bridge functions:
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
-  ccp-free          → CLIProxyAPI free tier: GLM-5.3-Flash via cline2api (:8317, Cline account free quota)
+  ccp-free          → CLIProxyAPI free(max) chain: GLM-5.3-Flash account pool first; DeepSeek (DS) only when the whole GLM pool is unavailable (:8317)
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
@@ -1399,8 +1399,8 @@ Available cc-vendor-bridge functions:
                       Sol effort xhigh / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
   ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-5.6-sol, OPUS/SONNET/HAIKU+subagents→free(max)
-                      (= glm-5.3-flash → ds-v4-flash → minimax-m3:free failover chain, :8317)
-                      480K context window (probed: glm-5.3-flash ≥520K, minimax-m3 hard cap 524,288)
+                      (= same free chain: GLM-5.3-Flash account pool first; DeepSeek (DS) only when the whole GLM pool is unavailable, :8317)
+                      480K context window (shared free-chain ceiling)
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol;
                       priority service tier for all GPT-5.6 requests
   ccp-gpt-smart     → All model slots forced to gpt-5.6-sol on the Standard service tier
