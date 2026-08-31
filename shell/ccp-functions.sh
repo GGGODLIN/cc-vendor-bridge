@@ -1271,7 +1271,7 @@ ccp-free-whoami() {
   local config_file="${CCP_FREE_CONFIG_FILE:-$HOME/.cli-proxy-api/config.yaml}"
   local now="${CCP_FREE_NOW:-$(date '+%Y-%m-%dT%H:%M:%S')}"
   local since="${CCP_FREE_SINCE:-$(date -v-1H '+%Y-%m-%dT%H:%M:%S')}"
-  local route_states=$'unknown\tabsent\t\tabsent\tabsent'
+  local route_states=$'unknown\tabsent\t\t'
 
   if [[ -r "$config_file" ]]; then
     route_states=$(awk '
@@ -1294,21 +1294,14 @@ ccp-free-whoami() {
         owner_labels[i + 1] = owner_label
         owner_count++
       }
-      function merge_state(current, candidate) {
-        if (current == "enabled" || candidate == "enabled") return "enabled"
-        if (current == "absent") return candidate
-        return current
-      }
       function commit() {
-        if (name == "freellmapi") freel = merge_state(freel, disabled ? "disabled" : (has_free ? "enabled" : "missing-free"))
-        if (name == "bai-glm") bai = merge_state(bai, disabled ? "disabled" : (has_free ? "enabled" : "missing-free"))
-        if (name == "agentrouter-glm") agentrouter = merge_state(agentrouter, disabled ? "disabled" : (has_free ? "enabled" : "missing-free"))
+        if (name == "freellmapi") freel = disabled ? "disabled" : (has_free ? "enabled" : "missing-free")
         if (!disabled && has_free) {
           free_count++
           add_owner(priority, route_label(name))
         }
       }
-      BEGIN { name = ""; disabled = 0; has_free = 0; priority = 0; free_count = 0; free_route = ""; owner_count = 0; freel = "absent"; bai = "absent"; agentrouter = "absent" }
+      BEGIN { name = ""; disabled = 0; has_free = 0; priority = 0; free_count = 0; free_route = ""; owner_count = 0; freel = "absent" }
       /^  - name:/ {
         commit()
         line = $0
@@ -1330,14 +1323,18 @@ ccp-free-whoami() {
       END {
         commit()
         free_route = ""
-        for (i = 1; i <= owner_count; i++) free_route = free_route (free_route == "" ? "" : " → ") owner_labels[i]
-        print (free_count > 0 ? "enabled" : "disabled") "\t" freel "\t" free_route "\t" bai "\t" agentrouter
+        next_fallback = ""
+        for (i = 1; i <= owner_count; i++) {
+          free_route = free_route (free_route == "" ? "" : " → ") owner_labels[i]
+          if (next_fallback == "" && owner_labels[i] != "Cline GLM") next_fallback = owner_labels[i]
+        }
+        print (free_count > 0 ? "enabled" : "disabled") "\t" freel "\t" free_route "\t" next_fallback
       }
     ' "$config_file" 2>/dev/null)
   fi
 
-  local free_route_state freellmapi_state free_route_chain bai_route_state agentrouter_route_state
-  IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain bai_route_state agentrouter_route_state <<< "$route_states"
+  local free_route_state freellmapi_state free_route_chain next_fallback
+  IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain next_fallback <<< "$route_states"
   if [[ "$free_route_state" != "enabled" ]]; then
     if [[ "$freellmapi_state" == "enabled" ]]; then
       print -P "%F{yellow}[$caller] 預計切換：FreeLLMAPI — 目前 free route 沒有 active alias=free owner%f" >&2
@@ -1411,10 +1408,8 @@ ccp-free-whoami() {
     else
       print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 無近期流量，${glm_available}/${account_total} 帳號可用%f" >&2
     fi
-  elif [[ "$bai_route_state" == "enabled" ]]; then
-    print -P "%F{yellow}[$caller] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用%f" >&2
-  elif [[ "$agentrouter_route_state" == "enabled" ]]; then
-    print -P "%F{yellow}[$caller] 預計切換：AgentRouter GLM（上游健康未知）— Cline GLM 帳號池目前不可用%f" >&2
+  elif [[ -n "$next_fallback" && "$next_fallback" != "Cline DeepSeek" ]]; then
+    print -P "%F{yellow}[$caller] 預計切換：${next_fallback}（上游健康未知）— Cline GLM 帳號池目前不可用%f" >&2
   elif (( ds_available > 0 )); then
     print -P "%F{yellow}[$caller] 預計切換：DeepSeek — GLM 帳號池目前不可用%f" >&2
   else

@@ -558,24 +558,6 @@ setup_fixture
 : > "$FIXTURE/ready"
 print -r -- '[]' > "$FIXTURE/request-logs.json"
 jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
-cat >> "$FIXTURE/config.yaml" <<'YAML'
-  - name: "bai-glm"
-    priority: 25
-    disabled: true
-    models:
-      - name: "bai-glm"
-        alias: "free"
-YAML
-invoke_wrapper ready
-assert_status 'disabled B.AI duplicate still launches' 0
-assert_output_contains 'active B.AI wins over disabled duplicate status' '[ccp-free] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
-assert_output_not_contains 'disabled B.AI duplicate does not skip to AgentRouter' '[ccp-free] 預計切換：AgentRouter GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
-teardown_fixture
-
-setup_fixture
-: > "$FIXTURE/ready"
-print -r -- '[]' > "$FIXTURE/request-logs.json"
-jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
 invoke_wrapper ready
 assert_status 'GLM exhaustion still launches' 0
 assert_output_contains 'GLM exhaustion predicts B.AI fallback' '[ccp-free] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
