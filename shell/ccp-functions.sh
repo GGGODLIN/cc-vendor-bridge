@@ -1269,6 +1269,12 @@ ccp-free-whoami() {
   local accounts_file="${CCP_FREE_ACCOUNTS_FILE:-$HOME/.cline2api/.cline-accounts.json}"
   local request_log_file="${CCP_FREE_REQUEST_LOG_FILE:-$HOME/.cline2api/.cline-request-logs.json}"
   local config_file="${CCP_FREE_CONFIG_FILE:-$HOME/.cli-proxy-api/config.yaml}"
+  local litellm_config_file="${CCP_FREE_LITELLM_CONFIG_FILE:-$HOME/Desktop/projects/local-llm-gateway/config/litellm.config.yaml}"
+  local agentrouter_config_file="${CCP_FREE_AGENTROUTER_CONFIG_FILE:-$HOME/.local/share/litellm-agentrouter/config/agentrouter.config.yaml}"
+  local litellm_log_file="${CCP_FREE_LITELLM_LOG_FILE:-$HOME/.local/state/litellm/calls-$(date +%F).jsonl}"
+  local curl_bin="${CCP_FREE_CURL_BIN:-/usr/bin/curl}"
+  local bai_liveliness_url="${CCP_FREE_BAI_LIVELINESS_URL:-http://127.0.0.1:8000/health/liveliness}"
+  local agentrouter_liveliness_url="${CCP_FREE_AGENTROUTER_LIVELINESS_URL:-http://127.0.0.1:8002/health/liveliness}"
   local now="${CCP_FREE_NOW:-$(date '+%Y-%m-%dT%H:%M:%S')}"
   local since="${CCP_FREE_SINCE:-$(date -v-1H '+%Y-%m-%dT%H:%M:%S')}"
   local route_states=$'unknown\tabsent\t\t'
@@ -1348,6 +1354,56 @@ ccp-free-whoami() {
 
   print -P "[$caller] free(max) route（config）：${free_route_chain}（上游健康未知）" >&2
 
+  local bai_deployments='unknown' agentrouter_deployments='unknown'
+  if [[ -r "$litellm_config_file" ]]; then
+    bai_deployments=$(awk '$1 == "-" && $2 == "model_name:" && $3 == "bai-glm" { count++ } END { print count + 0 }' "$litellm_config_file" 2>/dev/null)
+  fi
+  if [[ -r "$agentrouter_config_file" ]]; then
+    agentrouter_deployments=$(awk '$1 == "-" && $2 == "model_name:" && $3 == "agentrouter-glm" { count++ } END { print count + 0 }' "$agentrouter_config_file" 2>/dev/null)
+  fi
+
+  local bai_gateway='down' agentrouter_gateway='down'
+  "$curl_bin" -fsS --max-time 1 -o /dev/null "$bai_liveliness_url" >/dev/null 2>&1 && bai_gateway='up'
+  "$curl_bin" -fsS --max-time 1 -o /dev/null "$agentrouter_liveliness_url" >/dev/null 2>&1 && agentrouter_gateway='up'
+
+  local bai_observed_status='unknown' bai_observed_ts=''
+  local agentrouter_observed_status='unknown' agentrouter_observed_ts=''
+  local litellm_summary=''
+  if [[ -r "$litellm_log_file" ]]; then
+    litellm_summary=$(jq -sr '
+      def latest($group; $prefix):
+        [.[]
+          | select(
+              ((.metadata.model_group // "") == $group)
+              or (((.api_base // "") | startswith($prefix))))]
+        | sort_by(.end_ts // .ts // "")
+        | last // {};
+      (latest("bai-glm"; "https://api.b.ai/v1")) as $bai
+      | (latest("agentrouter-glm"; "https://agentrouter.org/v1")) as $agentrouter
+      | [
+          ($bai.status // "unknown"),
+          ($bai.end_ts // $bai.ts // ""),
+          ($agentrouter.status // "unknown"),
+          ($agentrouter.end_ts // $agentrouter.ts // "")
+        ]
+      | join("|")
+    ' "$litellm_log_file" 2>/dev/null) || litellm_summary=''
+  fi
+  if [[ -n "$litellm_summary" ]]; then
+    IFS='|' read -r bai_observed_status bai_observed_ts agentrouter_observed_status agentrouter_observed_ts <<< "$litellm_summary"
+  fi
+
+  local bai_observed='unknown' agentrouter_observed='unknown'
+  [[ -n "$bai_observed_ts" ]] && bai_observed="${bai_observed_status} ${bai_observed_ts}"
+  [[ -n "$agentrouter_observed_ts" ]] && agentrouter_observed="${agentrouter_observed_status} ${agentrouter_observed_ts}"
+  local bai_line='' agentrouter_line=''
+  if [[ "$free_route_chain" == *"B.AI GLM"* ]]; then
+    bai_line="[$caller] B.AI GLM：gateway ${bai_gateway}；${bai_deployments} deployments；最近 ${bai_observed}；quota unknown"
+  fi
+  if [[ "$free_route_chain" == *"AgentRouter GLM"* ]]; then
+    agentrouter_line="[$caller] AgentRouter GLM：gateway ${agentrouter_gateway}；${agentrouter_deployments} deployments；最近 ${agentrouter_observed}；quota／cooldown unknown"
+  fi
+
   local summary
   summary=$(jq -nr \
     --slurpfile state "$accounts_file" \
@@ -1363,44 +1419,65 @@ ccp-free-whoami() {
             | ($until == "" or $until <= $now))];
       def normalize_model:
         sub("\\([^()]*\\)$"; "");
-      (($requests[0] // [])
-        | map(. + {normalized_model: ((.model // "") | normalize_model)})
-        | map(select(
-            ((.finishedAt // "")[0:19] >= $since)
-            and (.normalized_model == "z-ai/glm-5.3-flash" or .normalized_model == "deepseek/deepseek-v4-flash")))
-        | sort_by(.finishedAt)
-        | last // {}) as $recent
+      def normalized_requests:
+        (($requests[0] // [])
+          | map(. + {normalized_model: ((.model // "") | normalize_model)})
+          | map(select(
+              ((.finishedAt // "")[0:19] >= $since)
+              and (.normalized_model == "z-ai/glm-5.3-flash" or .normalized_model == "deepseek/deepseek-v4-flash"))));
+      def recent_for($model):
+        (normalized_requests
+          | map(select(.normalized_model == $model))
+          | sort_by(.finishedAt)
+          | last // {});
+      (normalized_requests | sort_by(.finishedAt) | last // {}) as $recent
+      | (recent_for("z-ai/glm-5.3-flash")) as $glm_recent
+      | (recent_for("deepseek/deepseek-v4-flash")) as $ds_recent
       | [
           (active_accounts | length),
           (available("z-ai/glm-5.3-flash") | length),
           (available("deepseek/deepseek-v4-flash") | length),
           ($recent.normalized_model // ""),
-          (if ($recent | has("completed")) then ($recent.completed | tostring) else "" end)
+          (if ($recent | has("completed")) then ($recent.completed | tostring) else "" end),
+          (if ($glm_recent | has("completed")) then ($glm_recent.completed | tostring) else "" end),
+          ($glm_recent.finishedAt // ""),
+          (if ($ds_recent | has("completed")) then ($ds_recent.completed | tostring) else "" end),
+          ($ds_recent.finishedAt // "")
         ]
-      | @tsv
+      | join("|")
     ' 2>/dev/null) || {
     print -P "%F{yellow}[$caller] 無法查詢免費池狀態（invalid cline2api status data）%f" >&2
+    [[ -n "$bai_line" ]] && print -r -- "$bai_line" >&2
+    [[ -n "$agentrouter_line" ]] && print -r -- "$agentrouter_line" >&2
     return 0
   }
 
   local account_total glm_available ds_available recent_model recent_completed
-  IFS=$'\t' read -r account_total glm_available ds_available recent_model recent_completed <<< "$summary"
+  local glm_recent_completed glm_recent_ts ds_recent_completed ds_recent_ts
+  IFS='|' read -r account_total glm_available ds_available recent_model recent_completed glm_recent_completed glm_recent_ts ds_recent_completed ds_recent_ts <<< "$summary"
+  local glm_observed='unknown' ds_observed='unknown'
+  if [[ -n "$glm_recent_ts" ]]; then
+    [[ "$glm_recent_completed" == "true" ]] && glm_observed="success ${glm_recent_ts}" || glm_observed="failure ${glm_recent_ts}"
+  fi
+  if [[ -n "$ds_recent_ts" ]]; then
+    [[ "$ds_recent_completed" == "true" ]] && ds_observed="success ${ds_recent_ts}" || ds_observed="failure ${ds_recent_ts}"
+  fi
   local recent_failed=0
   if [[ "$recent_completed" == "false" ]]; then
     recent_failed=1
     if [[ "$recent_model" == "z-ai/glm-5.3-flash" ]]; then
-      print -P "%F{yellow}[$caller] ⚠️  最近請求失敗：GLM%f" >&2
+      print -P "%F{yellow}[$caller] ⚠️  最近請求失敗：GLM — ${glm_recent_ts:-unknown}%f" >&2
     elif [[ "$recent_model" == "deepseek/deepseek-v4-flash" ]]; then
-      print -P "%F{yellow}[$caller] ⚠️  最近請求失敗：DeepSeek%f" >&2
+      print -P "%F{yellow}[$caller] ⚠️  最近請求失敗：DeepSeek — ${ds_recent_ts:-unknown}%f" >&2
     fi
   fi
 
   local primary_glm=0
   if [[ "$recent_completed" == "true" && "$recent_model" == "z-ai/glm-5.3-flash" ]] && (( glm_available > 0 )); then
     primary_glm=1
-    print -P "%F{green}[$caller] 服務中：GLM 帳號池（free(max)）— ${glm_available}/${account_total} 帳號可用%f" >&2
+    print -P "%F{green}[$caller] 服務中：GLM 帳號池（free(max)）— ${glm_available}/${account_total} 帳號可用；最近 ${glm_observed}%f" >&2
   elif [[ "$recent_completed" == "true" && "$recent_model" == "deepseek/deepseek-v4-flash" ]] && (( ds_available > 0 )); then
-    print -P "%F{green}[$caller] 服務中：DeepSeek fallback（free(max)）— 最近成功來源%f" >&2
+    print -P "%F{green}[$caller] 服務中：DeepSeek fallback（free(max)）— 最近 ${ds_observed}%f" >&2
   elif (( glm_available > 0 )); then
     primary_glm=1
     if (( recent_failed )); then
@@ -1416,9 +1493,12 @@ ccp-free-whoami() {
     print -P "%F{red}[$caller] ⚠️  免費池目前沒有可用來源%f" >&2
   fi
 
+  [[ -n "$bai_line" ]] && print -r -- "$bai_line" >&2
+  [[ -n "$agentrouter_line" ]] && print -r -- "$agentrouter_line" >&2
+
   if (( primary_glm )); then
     if (( ds_available > 0 )); then
-      print -P "[$caller] 備援待命：DeepSeek — ${ds_available}/${account_total} 帳號可用" >&2
+      print -P "[$caller] 備援待命：DeepSeek — ${ds_available}/${account_total} 帳號可用；最近 ${ds_observed}" >&2
     else
       print -P "%F{yellow}[$caller] ⚠️  DeepSeek 備援目前不可用%f" >&2
     fi
