@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # 本檔在契約測試底下：改完必跑（從 repo root）：zsh tests/ccp-free-wrapper.test.zsh
 # 契約（2026-08-29 改版）：ccp-free 與 ccp-mix-gpt 共用 CLIProxyAPI :8317 的 free(max) chain：
-# GLM account pool 優先，整池不可用才切到 DeepSeek；offline FreeLLMAPI 不屬於有效備援。
+# Cline GLM → AgentRouter GLM → Cline DeepSeek；offline FreeLLMAPI 不屬於有效備援。
 set -u
 
 ROOT="${0:A:h:h}"
@@ -256,15 +256,10 @@ if [[ "$LIST_OUTPUT" == *'ccp-free'* ]]; then
 else
   bad 'ccp-list exposes ccp-free'
 fi
-if [[ "$LIST_OUTPUT" == *'GLM-5.3-Flash account pool first'* ]]; then
-  ok 'ccp-list identifies the GLM account pool as first free tier'
+if [[ "$LIST_OUTPUT" == *'Cline GLM → AgentRouter GLM → Cline DeepSeek'* ]]; then
+  ok 'ccp-list identifies the current free chain'
 else
-  bad 'ccp-list identifies the GLM account pool as first free tier'
-fi
-if [[ "$LIST_OUTPUT" == *'DeepSeek (DS) only when the whole GLM pool is unavailable'* ]]; then
-  ok 'ccp-list identifies DeepSeek as whole-pool fallback'
-else
-  bad 'ccp-list identifies DeepSeek as whole-pool fallback'
+  bad 'ccp-list identifies the current free chain'
 fi
 if [[ "$LIST_OUTPUT" != *'MiniMax'* && "$LIST_OUTPUT" != *'FreeLLMAPI'* ]]; then
   ok 'ccp-list omits inactive free-chain fallbacks'
@@ -346,8 +341,8 @@ assert_file_line 'OPUS model is hard-pinned free(max)' "$FIXTURE/capture.log" "o
 assert_file_line 'SONNET model is hard-pinned free(max)' "$FIXTURE/capture.log" "sonnet_model=$MODEL"
 assert_file_line 'HAIKU model is hard-pinned free(max)' "$FIXTURE/capture.log" "haiku_model=$MODEL"
 assert_file_line 'custom free-chain option is exposed' "$FIXTURE/capture.log" 'custom_option=free(max)'
-assert_file_line 'custom option names the GLM-to-DeepSeek chain' "$FIXTURE/capture.log" 'custom_name=Free chain (GLM pool → DeepSeek)'
-assert_file_line 'custom option describes whole-pool fallback' "$FIXTURE/capture.log" 'custom_description=GLM account pool first; DeepSeek (DS) only when the whole GLM pool is unavailable'
+assert_file_line 'custom option names the current free chain' "$FIXTURE/capture.log" 'custom_name=Free chain (Cline GLM → AgentRouter GLM → Cline DeepSeek)'
+assert_file_line 'custom option describes the configured free chain' "$FIXTURE/capture.log" 'custom_description=Cline GLM first; AgentRouter GLM next; Cline DeepSeek last'
 assert_file_line 'subagent model is hard-pinned free(max)' "$FIXTURE/capture.log" "subagent_model=$MODEL"
 assert_file_line 'context window matches GLM metadata' "$FIXTURE/capture.log" 'max_context_tokens=1048576'
 assert_file_line 'auto compact requests the supported 1M window' "$FIXTURE/capture.log" 'auto_compact_window=1000000'
@@ -451,6 +446,81 @@ invoke_wrapper ready
 assert_status 'disabled free route still launches' 0
 assert_output_contains 'disabled free route reports unavailable route' '[ccp-free] ⚠️  免費池 route 目前停用'
 assert_output_not_contains 'disabled free route does not claim GLM service' '[ccp-free] 服務中：GLM 帳號池'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+cat > "$FIXTURE/config.yaml" <<'YAML'
+openai-compatibility:
+  - name: "cline-free-glm"
+    priority: 30
+    disabled: false
+    models:
+      - name: "glm-5.3-flash"
+        alias: "free"
+  - name: "agentrouter-glm"
+    priority: 20
+    disabled: false
+    models:
+      - name: "glm-5.3-flash"
+        alias: "free"
+  - name: "cline-free-ds"
+    priority: 10
+    disabled: false
+    models:
+      - name: "deepseek-v4-flash"
+        alias: "free"
+  - name: "cline-free-proxy"
+    disabled: false
+    models:
+      - name: "glm-5.3-flash"
+        alias: "cline-free-proxy-glm"
+      - name: "deepseek-v4-flash"
+        alias: "cline-free-proxy-ds"
+YAML
+invoke_wrapper ready
+assert_status 'active free owners still launch' 0
+assert_output_not_contains 'active free owners do not report disabled route' '免費池 route 目前停用'
+assert_output_contains 'active free owners report the configured chain' '[ccp-free] free(max) route（config）：Cline GLM → AgentRouter GLM → Cline DeepSeek（上游健康未知）'
+assert_output_contains 'configured chain marks upstream health as unknown' '上游健康未知'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+print -r -- '[]' > "$FIXTURE/request-logs.json"
+jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
+cat > "$FIXTURE/config.yaml" <<'YAML'
+openai-compatibility:
+  - name: "cline-free-ds"
+    priority: 10
+    disabled: false
+    models:
+      - name: "deepseek-v4-flash"
+        alias: "free"
+  - name: "agentrouter-glm"
+    priority: 20
+    disabled: false
+    models:
+      - name: "glm-5.3-flash"
+        alias: "free"
+  - name: "cline-free-glm"
+    priority: 30
+    disabled: false
+    models:
+      - name: "glm-5.3-flash"
+        alias: "free"
+  - name: "cline-free-proxy"
+    disabled: false
+    models:
+      - name: "glm-5.3-flash"
+        alias: "glm-free"
+YAML
+invoke_wrapper ready
+assert_status 'priority-ordered route still launches' 0
+assert_output_contains 'configured chain follows provider priority' '[ccp-free] free(max) route（config）：Cline GLM → AgentRouter GLM → Cline DeepSeek（上游健康未知）'
+assert_output_contains 'GLM exhaustion reports AgentRouter as the next unknown stage' '[ccp-free] 預計切換：AgentRouter GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
+assert_output_not_contains 'GLM exhaustion does not skip AgentRouter to DeepSeek' '[ccp-free] 預計切換：DeepSeek — GLM 帳號池目前不可用'
+assert_output_not_contains 'unknown AgentRouter stage does not claim no free source' '[ccp-free] ⚠️  免費池目前沒有可用來源'
 teardown_fixture
 
 setup_fixture
