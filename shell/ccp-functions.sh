@@ -1271,12 +1271,13 @@ ccp-free-whoami() {
   local config_file="${CCP_FREE_CONFIG_FILE:-$HOME/.cli-proxy-api/config.yaml}"
   local now="${CCP_FREE_NOW:-$(date '+%Y-%m-%dT%H:%M:%S')}"
   local since="${CCP_FREE_SINCE:-$(date -v-1H '+%Y-%m-%dT%H:%M:%S')}"
-  local route_states="unknown\tabsent\t"
+  local route_states=$'unknown\tabsent\t\tabsent\tabsent'
 
   if [[ -r "$config_file" ]]; then
     route_states=$(awk '
       function route_label(value) {
         if (value == "cline-free-glm") return "Cline GLM"
+        if (value == "bai-glm") return "B.AI GLM"
         if (value == "agentrouter-glm") return "AgentRouter GLM"
         if (value == "cline-free-ds") return "Cline DeepSeek"
         if (value == "freellmapi") return "FreeLLMAPI"
@@ -1293,15 +1294,21 @@ ccp-free-whoami() {
         owner_labels[i + 1] = owner_label
         owner_count++
       }
+      function merge_state(current, candidate) {
+        if (current == "enabled" || candidate == "enabled") return "enabled"
+        if (current == "absent") return candidate
+        return current
+      }
       function commit() {
-        if (name == "freellmapi") freel = disabled ? "disabled" : (has_free ? "enabled" : "missing-free")
-        if (name == "agentrouter-glm") agentrouter = disabled ? "disabled" : (has_free ? "enabled" : "missing-free")
+        if (name == "freellmapi") freel = merge_state(freel, disabled ? "disabled" : (has_free ? "enabled" : "missing-free"))
+        if (name == "bai-glm") bai = merge_state(bai, disabled ? "disabled" : (has_free ? "enabled" : "missing-free"))
+        if (name == "agentrouter-glm") agentrouter = merge_state(agentrouter, disabled ? "disabled" : (has_free ? "enabled" : "missing-free"))
         if (!disabled && has_free) {
           free_count++
           add_owner(priority, route_label(name))
         }
       }
-      BEGIN { name = ""; disabled = 0; has_free = 0; priority = 0; free_count = 0; free_route = ""; owner_count = 0; freel = "absent"; agentrouter = "absent" }
+      BEGIN { name = ""; disabled = 0; has_free = 0; priority = 0; free_count = 0; free_route = ""; owner_count = 0; freel = "absent"; bai = "absent"; agentrouter = "absent" }
       /^  - name:/ {
         commit()
         line = $0
@@ -1324,13 +1331,13 @@ ccp-free-whoami() {
         commit()
         free_route = ""
         for (i = 1; i <= owner_count; i++) free_route = free_route (free_route == "" ? "" : " → ") owner_labels[i]
-        print (free_count > 0 ? "enabled" : "disabled") "\t" freel "\t" free_route "\t" agentrouter
+        print (free_count > 0 ? "enabled" : "disabled") "\t" freel "\t" free_route "\t" bai "\t" agentrouter
       }
     ' "$config_file" 2>/dev/null)
   fi
 
-  local free_route_state freellmapi_state free_route_chain agentrouter_route_state
-  IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain agentrouter_route_state <<< "$route_states"
+  local free_route_state freellmapi_state free_route_chain bai_route_state agentrouter_route_state
+  IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain bai_route_state agentrouter_route_state <<< "$route_states"
   if [[ "$free_route_state" != "enabled" ]]; then
     if [[ "$freellmapi_state" == "enabled" ]]; then
       print -P "%F{yellow}[$caller] 預計切換：FreeLLMAPI — 目前 free route 沒有 active alias=free owner%f" >&2
@@ -1404,6 +1411,8 @@ ccp-free-whoami() {
     else
       print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 無近期流量，${glm_available}/${account_total} 帳號可用%f" >&2
     fi
+  elif [[ "$bai_route_state" == "enabled" ]]; then
+    print -P "%F{yellow}[$caller] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用%f" >&2
   elif [[ "$agentrouter_route_state" == "enabled" ]]; then
     print -P "%F{yellow}[$caller] 預計切換：AgentRouter GLM（上游健康未知）— Cline GLM 帳號池目前不可用%f" >&2
   elif (( ds_available > 0 )); then
@@ -1437,7 +1446,6 @@ ccp-free-whoami() {
 }
 
 ccp-free() {
-  # Free tier via CLIProxyAPI free(max) chain: Cline GLM → AgentRouter GLM → Cline DeepSeek
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
@@ -1481,8 +1489,8 @@ ccp-free() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
     export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-free(max)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Free chain (Cline GLM → AgentRouter GLM → Cline DeepSeek)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Cline GLM first; AgentRouter GLM next; Cline DeepSeek last}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Free chain (Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek)}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Cline GLM first; B.AI GLM next; AgentRouter GLM next; Cline DeepSeek last}"
     export CLAUDE_CODE_SUBAGENT_MODEL='free(max)'
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1000000}
@@ -1493,8 +1501,6 @@ ccp-free() {
 }
 
 ccp-mix-gpt() {
-  # Main = GPT-5.6 Sol (Codex) via CLIProxyAPI; all other tiers → free(max) chain
-  # (Cline GLM → AgentRouter GLM → Cline DeepSeek)
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
@@ -1569,7 +1575,7 @@ Available cc-vendor-bridge functions:
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
-  ccp-free          → CLIProxyAPI free(max) chain: Cline GLM → AgentRouter GLM → Cline DeepSeek (:8317)
+  ccp-free          → CLIProxyAPI free(max) chain: Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek (:8317)
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
@@ -1577,7 +1583,7 @@ Available cc-vendor-bridge functions:
                       Sol effort xhigh / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
   ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-5.6-sol, OPUS/SONNET/HAIKU+subagents→free(max)
-                      (= same free chain: Cline GLM → AgentRouter GLM → Cline DeepSeek, :8317)
+                      (= same free chain: Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek, :8317)
                       480K context window (shared free-chain ceiling)
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol;
                       priority service tier for all GPT-5.6 requests
