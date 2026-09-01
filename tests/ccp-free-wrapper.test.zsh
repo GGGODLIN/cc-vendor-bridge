@@ -181,11 +181,50 @@ openai-compatibility:
       - name: "auto"
         alias: "free"
 YAML
+  cat > "$FIXTURE/litellm.config.yaml" <<'YAML'
+model_list:
+  - model_name: bai-glm
+    litellm_params:
+      api_key: os.environ/BAI_KEY_1
+      order: 1
+  - model_name: bai-glm
+    litellm_params:
+      api_key: os.environ/BAI_KEY_2
+      order: 2
+YAML
+  cat > "$FIXTURE/agentrouter.config.yaml" <<'YAML'
+model_list:
+  - model_name: agentrouter-glm
+    litellm_params:
+      api_key: os.environ/AGENTROUTER_KEY_1
+      order: 1
+  - model_name: agentrouter-glm
+    litellm_params:
+      api_key: os.environ/AGENTROUTER_KEY_2
+      order: 2
+YAML
+  cat > "$FIXTURE/litellm-calls.jsonl" <<'JSONL'
+{"ts":"2026-08-29T20:35:00+08:00","end_ts":"2026-08-29T20:35:06+08:00","status":"success","api_base":"https://api.b.ai/v1/","metadata":{"model_group":"bai-glm"},"messages":[{"content":"LITELLM-PROMPT-CANARY"}],"response":{"id":"LITELLM-RESPONSE-CANARY"}}
+{"ts":"2026-08-29T20:40:00+08:00","end_ts":"2026-08-29T20:40:04+08:00","status":"failure","api_base":"https://agentrouter.org/v1/","metadata":{"model_group":"agentrouter-glm"},"error":"LITELLM-ERROR-CANARY"}
+JSONL
   write_executable "$FIXTURE/bin/nc" '#!/bin/sh
 if [ -f "$CCP_FREE_READY_FILE" ]; then
   exit 0
 fi
 exit 1'
+  write_executable "$FIXTURE/bin/curl" '#!/bin/sh
+printf "%s\n" "$*" >> "$CCP_FREE_CURL_LOG"
+last=""
+for arg in "$@"; do
+  last="$arg"
+done
+if [ -n "${CCP_FREE_CURL_FAIL_URL:-}" ] && [ "$last" = "$CCP_FREE_CURL_FAIL_URL" ]; then
+  exit 7
+fi
+case "$last" in
+  *"/health/liveliness") exit 0 ;;
+  *) exit 7 ;;
+esac'
   write_executable "$FIXTURE/bin/launchctl" '#!/bin/sh
 printf "%s\n" "$*" >> "$CCP_FREE_LAUNCH_LOG"
 if [ "${CCP_FREE_LAUNCH_MODE:-success}" = ready ]; then
@@ -243,6 +282,13 @@ invoke_wrapper() {
     export CCP_FREE_ACCOUNTS_FILE="$FIXTURE/accounts.json"
     export CCP_FREE_REQUEST_LOG_FILE="$FIXTURE/request-logs.json"
     export CCP_FREE_CONFIG_FILE="$FIXTURE/config.yaml"
+    export CCP_FREE_LITELLM_CONFIG_FILE="$FIXTURE/litellm.config.yaml"
+    export CCP_FREE_AGENTROUTER_CONFIG_FILE="$FIXTURE/agentrouter.config.yaml"
+    export CCP_FREE_LITELLM_LOG_FILE="$FIXTURE/litellm-calls.jsonl"
+    export CCP_FREE_CURL_BIN="$FIXTURE/bin/curl"
+    export CCP_FREE_CURL_LOG="$FIXTURE/curl.log"
+    export CCP_FREE_BAI_LIVELINESS_URL='http://127.0.0.1:8000/health/liveliness'
+    export CCP_FREE_AGENTROUTER_LIVELINESS_URL='http://127.0.0.1:8002/health/liveliness'
     export CCP_FREE_NOW='2026-08-29T21:00:00'
     export CCP_FREE_SINCE='2026-08-29T20:00:00'
     export ANTHROPIC_API_KEY='outer-paid-key'
@@ -339,7 +385,13 @@ invoke_wrapper ready
 assert_status 'pinned invocation returns success' 0
 assert_output_contains 'free pool reports observed GLM service' '[ccp-free] 服務中：GLM 帳號池（free(max)）'
 assert_output_contains 'free pool counts unused active GLM accounts' '3/3 帳號可用'
-assert_output_contains 'free pool reports DeepSeek standby' '[ccp-free] 備援待命：DeepSeek — 3/3 帳號可用'
+assert_output_contains 'Cline GLM reports raw observed timestamp' '最近 success 2026-08-29T20:30:00+08:00'
+assert_output_contains 'B.AI reports passive local and observed status' '[ccp-free] B.AI GLM：gateway up；2 deployments；最近 success 2026-08-29T20:35:06+08:00；quota unknown'
+assert_output_contains 'AgentRouter reports passive local and observed status' '[ccp-free] AgentRouter GLM：gateway up；2 deployments；最近 failure 2026-08-29T20:40:04+08:00；quota／cooldown unknown'
+assert_output_contains 'free pool reports DeepSeek standby' '[ccp-free] 備援待命：DeepSeek — 3/3 帳號可用；最近 unknown'
+assert_file_line 'B.AI checks only local liveliness' "$FIXTURE/curl.log" '-fsS --max-time 1 -o /dev/null http://127.0.0.1:8000/health/liveliness'
+assert_file_line 'AgentRouter checks only local liveliness' "$FIXTURE/curl.log" '-fsS --max-time 1 -o /dev/null http://127.0.0.1:8002/health/liveliness'
+assert_line_count 'passive summary performs two local liveliness checks' "$FIXTURE/curl.log" 2
 assert_output_contains 'free pool reports disabled FreeLLMAPI' '[ccp-free] FreeLLMAPI：已停用'
 assert_output_not_contains 'healthy free pool omits warning marker' '⚠️'
 assert_output_not_contains 'free pool output omits client key' "$CC_KEY"
@@ -350,6 +402,9 @@ assert_output_not_contains 'free pool output omits unused account email' 'gamma@
 assert_output_not_contains 'free pool output omits refresh token canary' 'REFRESH-CANARY'
 assert_output_not_contains 'free pool output omits account ID canary' 'ACCOUNT-CANARY'
 assert_output_not_contains 'free pool output omits nested canary' 'NESTED-CANARY'
+assert_output_not_contains 'free pool output omits LiteLLM prompt canary' 'LITELLM-PROMPT-CANARY'
+assert_output_not_contains 'free pool output omits LiteLLM response canary' 'LITELLM-RESPONSE-CANARY'
+assert_output_not_contains 'free pool output omits LiteLLM error canary' 'LITELLM-ERROR-CANARY'
 assert_file_line 'vendor marker is process-local free' "$FIXTURE/capture.log" 'cc_vendor=free'
 assert_file_line 'base URL comes from keys.env' "$FIXTURE/capture.log" "base_url=$CC_URL"
 assert_file_line 'auth token is the CC relay key' "$FIXTURE/capture.log" "auth_token=$CC_KEY"
@@ -383,6 +438,17 @@ invoke_wrapper ready
 assert_status 'idle free pool still launches' 0
 assert_output_contains 'idle free pool reports configured intent' '[ccp-free] 預計使用：GLM 帳號池（free(max)）— 無近期流量'
 assert_file_line 'idle free pool invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+export CCP_FREE_CURL_FAIL_URL='http://127.0.0.1:8002/health/liveliness'
+invoke_wrapper ready
+unset CCP_FREE_CURL_FAIL_URL
+assert_status 'one local gateway down still launches' 0
+assert_output_contains 'B.AI remains up when AgentRouter gateway is down' '[ccp-free] B.AI GLM：gateway up；2 deployments'
+assert_output_contains 'AgentRouter local gateway failure is visible' '[ccp-free] AgentRouter GLM：gateway down；2 deployments'
+assert_file_line 'gateway failure still invokes claude' "$FIXTURE/capture.log" 'called=1'
 teardown_fixture
 
 setup_fixture
@@ -444,6 +510,22 @@ JSON
 invoke_wrapper ready
 assert_status 'unrelated recent model still launches' 0
 assert_output_contains 'unrelated model does not hide normalized GLM success' '[ccp-free] 服務中：GLM 帳號池（free(max)）'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+cat > "$FIXTURE/request-logs.json" <<'JSON'
+[
+  {
+    "completed": true,
+    "finishedAt": "2026-08-29T20:50:00+08:00",
+    "model": "deepseek/deepseek-v4-flash"
+  }
+]
+JSON
+invoke_wrapper ready
+assert_status 'DeepSeek-only recent data still launches' 0
+assert_output_contains 'DeepSeek-only data keeps its timestamp fields aligned' '[ccp-free] 服務中：DeepSeek fallback（free(max)）— 最近 success 2026-08-29T20:50:00+08:00'
 teardown_fixture
 
 setup_fixture
@@ -581,6 +663,8 @@ setup_fixture
 invoke_wrapper ready
 assert_status 'missing status data still launches' 0
 assert_output_contains 'missing status data prints yellow diagnostic' '[ccp-free] 無法查詢免費池狀態'
+assert_output_contains 'missing Cline data still reports B.AI status' '[ccp-free] B.AI GLM：gateway up；2 deployments；最近 success 2026-08-29T20:35:06+08:00；quota unknown'
+assert_output_contains 'missing Cline data still reports AgentRouter status' '[ccp-free] AgentRouter GLM：gateway up；2 deployments；最近 failure 2026-08-29T20:40:04+08:00；quota／cooldown unknown'
 assert_file_line 'missing status data invokes claude' "$FIXTURE/capture.log" 'called=1'
 teardown_fixture
 
