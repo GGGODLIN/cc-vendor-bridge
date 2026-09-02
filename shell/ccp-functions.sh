@@ -36,6 +36,11 @@
 # zsh idiom: %x = currently-sourced file path; :A = absolute; :h = parent dir.
 _CC_VENDOR_BRIDGE_DIR="${${(%):-%x}:A:h:h}"
 
+_cc_vendor_claude() {
+  local launcher="${CC_CLAUDE_BIN:-claude}"
+  command "$launcher" "$@"
+}
+
 # ===== DeepSeek V4-Pro =====
 # Source: https://api-docs.deepseek.com/zh-cn/quick_start/agent_integrations/claude_code
 ccp-deepseek() {
@@ -72,7 +77,7 @@ ccp-deepseek() {
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1000000}
-    claude "$@"
+    _cc_vendor_claude "$@"
   )
 }
 
@@ -204,7 +209,7 @@ ccp-glm() {
     # limit" error, small sessions silently degrade (2026-07-04 proxy-capture verified,
     # sessions bcaae410 / a2a18881).
     local _nudge="WebSearch is disabled on this vendor (z.ai endpoint rejects CC client-side WebSearch schema with 400 [1210] — verified 2026-06-22 for glm-4.7 / glm-5.2). For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — returns top 5 results with LLM-ready highlights from Exa neural search (free tier 20K req/month, no z.ai Coding Plan quota cost). Pass --json flag for raw JSON if you need to parse fields."
-    claude --model 'glm-5.2[1m]' \
+    _cc_vendor_claude --model 'glm-5.2[1m]' \
       --fallback-model 'glm-5.2[1m]' \
       --disallowed-tools WebSearch \
       --append-system-prompt "${_nudge} IMPORTANT: When dispatching Task subagents or workflow agents that may need web search, you MUST include this verbatim instruction in their prompt: 'For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\"' — in interactive mode subagents do not inherit this nudge (session 2650cf5f verified: subagent fell back to DuckDuckGo/Bing/Google HTML scraping; 2026-08-22 marker probe confirmed the flag below covers --print runs only)." \
@@ -253,7 +258,7 @@ ccp-mimo() {
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1100000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    claude "$@"
+    _cc_vendor_claude "$@"
   )
 }
 
@@ -276,7 +281,7 @@ ccp-mimo-payg() {
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1100000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    claude "$@"
+    _cc_vendor_claude "$@"
   )
 }
 
@@ -386,7 +391,7 @@ ccp-bruce() {
     # --model CLI flag outranks settings.json, whose "model" pin would otherwise
     # override the env mapping and mis-route the session.
     local _nudge="This vendor bills per token against a prepaid balance, and the context window is pinned at 272,000 because crossing that line rebills the entire request at double the input rate. Budget context deliberately. WebSearch works here and returns real results, but each call injects roughly 21,000 tokens of search output — about 8% of the whole window. For lightweight factual lookups prefer the Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — top 5 results with LLM-ready highlights from Exa neural search, free tier, zero Bruce token cost, and a fraction of the context. Pass --json for raw fields. Reserve WebSearch for cases that genuinely need live page content or where exa comes back empty."
-    claude --effort "${CCP_BRUCE_EFFORT:-high}" \
+    _cc_vendor_claude --effort "${CCP_BRUCE_EFFORT:-high}" \
       --model "$ANTHROPIC_MODEL" \
       --append-system-prompt "${_nudge} IMPORTANT: when dispatching Task subagents or workflow agents, include this guidance verbatim in their prompt — in interactive mode subagents do not inherit it (session 2650cf5f: a subagent fell back to scraping DuckDuckGo/Bing/Google HTML; 2026-08-22 marker probe confirmed the flag below covers --print runs only)." \
       --append-subagent-system-prompt "$_nudge" \
@@ -688,9 +693,9 @@ except Exception:
       [[ "$arg" == "--model" || "$arg" == --model=* ]] && has_model_arg=1
     done
     if (( has_model_arg )); then
-      claude "$@"
+      _cc_vendor_claude "$@"
     else
-      claude --model sonnet "$@"
+      _cc_vendor_claude --model sonnet "$@"
     fi
   )
 }
@@ -777,7 +782,7 @@ ccp-relay() {
     # web_search_20250305 server-tool schema to Codex/Antigravity upstreams
     # (glm rejects with 400, bruce silently fabricates — see docs/caveats.md §13b).
     # Keep disabled until probed; remove after a verified pass.
-    claude --disallowed-tools WebSearch "$@"
+    _cc_vendor_claude --disallowed-tools WebSearch "$@"
   )
 }
 
@@ -1098,7 +1103,7 @@ ccp-gpt() {
     # ~/.claude/hooks/gpt-convergence-reminder.sh carries the same rules on the
     # SessionStart(compact) path for GPT sessions this launcher did not start.
     local _rules="背景工作等待：Agent 與背景 Bash 完成時，harness 會自動送 task-notification 回來喚醒 session，不需要主動確認。派工後直接進行下一件不相依的工作，不要用 TaskOutput block=true 站著等結果；只有在沒有其他可做的事、且必須拿到該結果才能繼續時才查一次，查完仍未完成就回去做別的，不要連續輪詢。撞錯先修根因：遇到格式、參數、路徑、空行這類小失敗，先判斷根因是否三行內可修，可修就直接修，不要因為一個小錯改走另一條執行路徑（改跑 headless claude -p、換一套工具鏈、繞去別的入口）——換路會帶進一整組新的失敗模式，而原始根因仍未解決；確實需要換路時，先說明為什麼根因不可修，再換。人類專屬點交還上限：撞到只有使用者能做或能拍板的事（sudo／GUI 操作／互動式 auth／憑證設定／系統升級，或範圍・權威・對外行為・風險的拍板），同一點最多嘗試 2 次，用盡即交還、不得換路硬撐。交還內容自包含（讀的人沒有你的對話與檔案）：脈絡一句／每個選項附一句後果／建議＋理由一句；能標假設續跑的先列「我假設 1…N」續跑，不能的就收工。"
-    command claude --effort xhigh --model "$ANTHROPIC_MODEL" \
+    _cc_vendor_claude --effort xhigh --model "$ANTHROPIC_MODEL" \
       --disallowed-tools 'WebSearch' \
       --append-system-prompt "${_rules}IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面三條逐字放進它們的 prompt。互動模式下 subagent 不會繼承本注入，只有 --print 模式才會。" \
       --append-subagent-system-prompt "$_rules" \
@@ -1233,7 +1238,7 @@ ccp-gemini-pro() {
     # WebSearch: same unprobed relay translation path as ccp-relay / ccp-gpt
     # (docs/caveats.md §13b). Unlike ccp-gpt, Skill(claude-api) stays allowed —
     # its ~200k-token injection fits the 1M window.
-    claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
   )
 }
 
@@ -1260,7 +1265,7 @@ ccp-gemini-flash() {
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
   )
 }
 
@@ -1525,7 +1530,7 @@ ccp-free() {
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
   local keys_file="${CCP_FREE_KEYS_FILE:-$HOME/.cli-proxy-api/keys.env}"
-  local claude_bin="${CCP_FREE_CLAUDE_BIN:-claude}"
+  local claude_bin="${CCP_FREE_CLAUDE_BIN:-${CC_CLAUDE_BIN:-claude}}"
   local relay_service='com.philip.cli-proxy-api'
 
   if [[ ! -f "$keys_file" ]]; then
@@ -1580,7 +1585,7 @@ ccp-mix-gpt() {
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
   local keys_file="${CCP_FREE_KEYS_FILE:-$HOME/.cli-proxy-api/keys.env}"
-  local claude_bin="${CCP_FREE_CLAUDE_BIN:-claude}"
+  local claude_bin="${CCP_FREE_CLAUDE_BIN:-${CC_CLAUDE_BIN:-claude}}"
   local relay_service='com.philip.cli-proxy-api'
 
   if [[ ! -f "$keys_file" ]]; then
@@ -1788,8 +1793,8 @@ ccp-resume() {
   # Inject ANTHROPIC_MODEL so resumed session uses the jsonl's last model
   # (otherwise CC defaults to ccp-* function's default, e.g. GLM-5.1).
   if [[ "$vendor" == "anthropic" || "$vendor" == "unknown" ]]; then
-    echo "[ccp-resume] resuming via plain 'claude --resume' (model=$model)"
-    ANTHROPIC_MODEL="$model" claude --resume "$fullsid"
+    echo "[ccp-resume] resuming via selected Claude Code binary (model=$model)"
+    ANTHROPIC_MODEL="$model" _cc_vendor_claude --resume "$fullsid"
   else
     local fn="ccp-$vendor"
     if ! type "$fn" >/dev/null 2>&1; then

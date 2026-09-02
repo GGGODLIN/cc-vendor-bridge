@@ -268,13 +268,20 @@ invoke_wrapper() {
   local mode="$1"
   local outer_model="${2-}"
   local wrapper="${3:-ccp-free}"
+  local binary_mode="${4:-direct}"
   (
     export CCP_FREE_LAUNCH_MODE="$mode"
     export CCP_FREE_KEYS_FILE="$FIXTURE/keys.env"
     export CCP_FREE_NC_BIN="$FIXTURE/bin/nc"
     export CCP_FREE_LAUNCHCTL_BIN="$FIXTURE/bin/launchctl"
     export CCP_FREE_SLEEP_BIN="$FIXTURE/bin/sleep"
-    export CCP_FREE_CLAUDE_BIN="$FIXTURE/bin/claude"
+    if [[ "$binary_mode" == "selector" ]]; then
+      unset CCP_FREE_CLAUDE_BIN
+      export CC_CLAUDE_BIN="$FIXTURE/bin/claude"
+    else
+      export CCP_FREE_CLAUDE_BIN="$FIXTURE/bin/claude"
+      unset CC_CLAUDE_BIN
+    fi
     export CCP_FREE_READY_FILE="$FIXTURE/ready"
     export CCP_FREE_LAUNCH_LOG="$FIXTURE/launch.log"
     export CCP_FREE_SLEEP_LOG="$FIXTURE/sleep.log"
@@ -357,6 +364,13 @@ invoke_wrapper ready
 assert_status 'ready relay returns success' 0
 assert_file_not_line 'ready relay does not kickstart' "$FIXTURE/launch.log" "kickstart gui/$UID/com.philip.cli-proxy-api"
 assert_file_line 'ready relay invokes normal claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+invoke_wrapper ready '' ccp-free selector
+assert_status 'selector fallback returns success' 0
+assert_file_line 'selector fallback invokes CC_CLAUDE_BIN' "$FIXTURE/capture.log" 'called=1'
 teardown_fixture
 
 print -r -- '── cold relay'
@@ -671,8 +685,8 @@ teardown_fixture
 print -r -- '── ccp-mix-gpt startup summary'
 setup_fixture
 : > "$FIXTURE/ready"
-invoke_wrapper ready '' ccp-mix-gpt
-assert_status 'mixed wrapper returns success' 0
+invoke_wrapper ready '' ccp-mix-gpt selector
+assert_status 'mixed wrapper selector fallback returns success' 0
 assert_output_contains 'mixed wrapper reports GPT main route' '[ccp-mix-gpt] Main：GPT-5.6 Sol'
 assert_output_contains 'mixed wrapper reuses free pool summary' '[ccp-mix-gpt] 服務中：GLM 帳號池（free(max)）'
 assert_output_count 'mixed wrapper reports GPT main once' '[ccp-mix-gpt] Main：GPT-5.6 Sol' 1

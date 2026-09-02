@@ -62,7 +62,7 @@ assert_not_contains \
 assert_contains \
   "ccp-gpt defaults Sol to xhigh effort" \
   "${functions[ccp-gpt]}" \
-  "command claude --effort xhigh"
+  "_cc_vendor_claude --effort xhigh"
 
 assert_contains \
   "ccp-gpt maps Opus to Luna at max effort" \
