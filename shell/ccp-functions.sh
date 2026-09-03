@@ -1619,7 +1619,11 @@ ccp-mix-gpt() {
     print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
     ccp-free-whoami ccp-mix-gpt
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
-    export CC_VENDOR=mix
+    if [[ "$main_model" == *[Gg][Pp][Tt]* ]]; then
+      export CC_VENDOR=mix-gpt
+    else
+      export CC_VENDOR=mix
+    fi
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL="$main_model"

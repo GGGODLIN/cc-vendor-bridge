@@ -697,6 +697,7 @@ assert_output_not_contains 'mixed wrapper output omits refresh token canary' 'RE
 assert_output_not_contains 'mixed wrapper output omits account ID canary' 'ACCOUNT-CANARY'
 assert_output_not_contains 'mixed wrapper output omits nested canary' 'NESTED-CANARY'
 assert_file_line 'mixed wrapper keeps GPT main model' "$FIXTURE/capture.log" 'model=gpt-5.6-sol'
+assert_file_line 'mixed wrapper marks GPT main for startup convergence' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
 assert_file_line 'mixed wrapper keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 assert_file_line 'mixed wrapper keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
 teardown_fixture
@@ -718,6 +719,7 @@ assert_status 'mixed main override returns success' 0
 assert_output_contains 'mixed main summary follows override' '[ccp-mix-gpt] Main：ds-free'
 assert_output_not_contains 'mixed main summary does not claim default Sol' '[ccp-mix-gpt] Main：GPT-5.6 Sol'
 assert_file_line 'mixed main override reaches claude' "$FIXTURE/capture.log" 'model=ds-free'
+assert_file_line 'mixed non-GPT override keeps the generic vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix'
 assert_file_line 'mixed main override preserves free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 teardown_fixture
 
