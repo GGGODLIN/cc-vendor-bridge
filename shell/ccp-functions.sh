@@ -1145,6 +1145,22 @@ ccp-gpt-smart() {
   )
 }
 
+# Roll back to the pre-Astra flagship without editing ccp-gpt. Every slot in
+# ccp-gpt reads ${VAR:-default}, so presetting them here restores the exact
+# configuration that shipped before 2026-09-05 — same delegation pattern as
+# ccp-gpt-smart. The fleet slots (OPUS/SONNET/HAIKU→luna) never moved during the
+# Astra promotion, so they are deliberately absent here.
+# For the pre-Astra fast tier: ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5.6-sol ccp-gpt-fast
+ccp-sol() {
+  (
+    ANTHROPIC_MODEL=gpt-5.6-sol \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=gpt-5.6-sol \
+    ANTHROPIC_CUSTOM_MODEL_OPTION=gpt-5.6-sol-fast \
+    ANTHROPIC_CUSTOM_MODEL_OPTION_NAME='GPT-5.6 Sol Fast' \
+      ccp-gpt "$@"
+  )
+}
+
 # ===== CLIProxyAPI relay, Gemini via Antigravity OAuth (qwe70301 AI Pro) =====
 # Split into two entry points because the Pro and Flash tiers draw on the same
 # subscription quota at very different rates — keeping them separate makes the
@@ -1675,6 +1691,8 @@ Available cc-vendor-bridge functions:
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-6-astra;
                       priority service tier for all Codex requests
   ccp-gpt-smart     → All model slots forced to gpt-6-astra on the Standard service tier
+  ccp-sol           → Pre-Astra rollback: ccp-gpt routing with FABLE+main on gpt-5.6-sol
+                      and the picker option on sol-fast (fleet slots unchanged)
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
   ccp-gpt-relogin   → Re-auth a Codex account AND restore the priority that --codex-login
