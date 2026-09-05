@@ -786,18 +786,21 @@ ccp-relay() {
   )
 }
 
-# ===== CLIProxyAPI relay, all-GPT slot mapping (GPT-5.6 family) =====
+# ===== CLIProxyAPI relay, all-GPT slot mapping (cross-generation) =====
 # Recipe from OpenAI Codex lead Tibo Sottiaux (x.com/thsottiaux/status/2076119366647894371,
 # 2026-07-12) plus community fixes from the same thread. Tier mapping per OpenAI's
-# official positioning (Sol=flagship, Terra=balanced default, Luna=fast/cheap):
-#   FABLE→gpt-5.6-sol  OPUS/SONNET/HAIKU→gpt-5.6-luna(max)
-# Terra dropped from the mapping 2026-08-17 (only Sol and Luna justify their price).
+# official positioning (Astra=flagship, Luna=fast/cheap):
+#   FABLE→gpt-6-astra  OPUS/SONNET/HAIKU→gpt-5.6-luna(max)
+# Terra dropped from the mapping 2026-08-17 (only the flagship and Luna justify their price).
+# Flagship seat moved 5.6-Sol→6-Astra on 2026-09-05; the cheap subagent fleet stays on
+# 5.6-Luna deliberately — Astra bills 2.5x Sol, so promoting the fleet would multiply the
+# largest consumer. Note this makes the mapping cross-generation, not one model family.
 # Context pinned to 1M since 2026-08-17, when OpenAI opened the 1.05M window to
 # ChatGPT accounts; measured backend cap is 922,000 (see the probe notes at the
 # CLAUDE_CODE_MAX_CONTEXT_TOKENS export below). Both overridable.
 # Per-call override:
-#   ANTHROPIC_MODEL='gpt-5.6-sol(high)' ccp-gpt        # effort suffix works
-#   CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol ccp-gpt     # explicitly override routing
+#   ANTHROPIC_MODEL='gpt-6-astra(high)' ccp-gpt        # effort suffix works
+#   CLAUDE_CODE_SUBAGENT_MODEL=gpt-6-astra ccp-gpt     # explicitly override routing
 
 # Which Codex account will actually serve this session. The relay silently falls
 # back to the next auth when the preferred one dies (2026-07-25: personal Pro token
@@ -1007,8 +1010,8 @@ ccp-gpt() {
     export CC_VENDOR=gpt
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-5.6-sol}
-    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-5.6-sol}
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-6-astra}
+    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-6-astra}
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-luna(max)}"
     # OPUS/SONNET/HAIKU land on Luna at pinned max effort. Terra is retired
     # from the mapping: in practice only Sol and Luna earn their price, and Terra sat in
@@ -1020,8 +1023,8 @@ ccp-gpt() {
     # touching the cross-vendor routing policy.
     export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-luna(max)}"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna(max)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION:-gpt-5.6-sol-fast}
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-GPT-5.6\ Sol\ Fast}
+    export ANTHROPIC_CUSTOM_MODEL_OPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION:-gpt-6-astra-fast}
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-GPT-6\ Astra\ Fast}
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Priority\ tier\ for\ the\ main\ agent}
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
@@ -1113,7 +1116,7 @@ ccp-gpt() {
 
 ccp-gpt-fast() {
   (
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-sol}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-6-astra}"
     if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
       export ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS}"$'\n'"X-CCP-Fast: 1"
     else
@@ -1132,12 +1135,12 @@ ccp-gpt-smart() {
     else
       unset ANTHROPIC_CUSTOM_HEADERS
     fi
-    ANTHROPIC_MODEL=gpt-5.6-sol \
-    ANTHROPIC_DEFAULT_FABLE_MODEL=gpt-5.6-sol \
-    ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5.6-sol \
-    ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.6-sol \
-    ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.6-sol \
-    CLAUDE_CODE_SUBAGENT_MODEL=gpt-5.6-sol \
+    ANTHROPIC_MODEL=gpt-6-astra \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=gpt-6-astra \
+    ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-6-astra \
+    ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-6-astra \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-6-astra \
+    CLAUDE_CODE_SUBAGENT_MODEL=gpt-6-astra \
       ccp-gpt "$@"
   )
 }
@@ -1613,9 +1616,9 @@ ccp-mix-gpt() {
       print -P "%F{red}[ccp-mix-gpt] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
       exit 1
     fi
-    local main_model="${ANTHROPIC_MODEL:-gpt-5.6-sol}"
+    local main_model="${ANTHROPIC_MODEL:-gpt-6-astra}"
     local main_label="$main_model"
-    [[ "$main_model" == "gpt-5.6-sol" ]] && main_label="GPT-5.6 Sol"
+    [[ "$main_model" == "gpt-6-astra" ]] && main_label="GPT-6 Astra"
     print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
     ccp-free-whoami ccp-mix-gpt
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
@@ -1627,7 +1630,7 @@ ccp-mix-gpt() {
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL="$main_model"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL='gpt-5.6-sol'
+    export ANTHROPIC_DEFAULT_FABLE_MODEL='gpt-6-astra'
     export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
@@ -1663,22 +1666,22 @@ Available cc-vendor-bridge functions:
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
-  ccp-gpt           → CLIProxyAPI relay, all-GPT-5.6 slot mapping (FABLE→sol / OPUS+SONNET+HAIKU→luna(max),
-                      Sol effort xhigh / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
+  ccp-gpt           → CLIProxyAPI relay, cross-gen slot mapping (FABLE→astra / OPUS+SONNET+HAIKU→luna(max),
+                      Astra effort xhigh / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
-  ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-5.6-sol, OPUS/SONNET/HAIKU+subagents→free(max)
+  ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-6-astra, OPUS/SONNET/HAIKU+subagents→free(max)
                       (= same free chain: Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek, :8317)
                       480K context window (shared free-chain ceiling)
-  ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol;
-                      priority service tier for all GPT-5.6 requests
-  ccp-gpt-smart     → All model slots forced to gpt-5.6-sol on the Standard service tier
+  ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-6-astra;
+                      priority service tier for all Codex requests
+  ccp-gpt-smart     → All model slots forced to gpt-6-astra on the Standard service tier
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
   ccp-gpt-relogin   → Re-auth a Codex account AND restore the priority that --codex-login
                       strips (upstream PR #3843, unmerged). Use instead of raw --codex-login.
   ccp-relay-priority-snapshot / -apply
                     → The snapshot/restore halves, usable standalone if priority went missing
-  /model picker      → Choose GPT-5.6 Sol Fast and press s for this session only; routed subagents stay Standard
+  /model picker      → Choose GPT-6 Astra Fast and press s for this session only; routed subagents stay Standard
 
   ccp-gemini-pro    → CLIProxyAPI relay, Gemini 3.1 Pro High via Antigravity OAuth
                       (OPUS/FABLE→gemini-pro-agent(high) / SONNET→gemini-pro-agent /
