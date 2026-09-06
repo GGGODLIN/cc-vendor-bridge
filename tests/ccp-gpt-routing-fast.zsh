@@ -59,15 +59,40 @@ assert_not_contains \
   "${functions[ccp-gpt]}" \
   "ultracode"
 
-assert_contains \
-  "ccp-gpt defaults Astra to medium effort" \
-  "${functions[ccp-gpt]}" \
-  "local main_effort=medium"
+assert_eq \
+  "shared effort helper maps Astra to medium" \
+  "medium" \
+  "$(_ccp_effort_for_model gpt-6-astra)"
+
+assert_eq \
+  "shared effort helper maps Astra Fast to medium" \
+  "medium" \
+  "$(_ccp_effort_for_model gpt-6-astra-fast)"
+
+assert_eq \
+  "shared effort helper maps Sol to xhigh" \
+  "xhigh" \
+  "$(_ccp_effort_for_model gpt-5.6-sol)"
+
+assert_eq \
+  "shared effort helper maps Sol Fast to xhigh" \
+  "xhigh" \
+  "$(_ccp_effort_for_model gpt-5.6-sol-fast)"
+
+assert_eq \
+  "shared effort helper leaves other models unmapped" \
+  "" \
+  "$(_ccp_effort_for_model ds-free)"
 
 assert_contains \
-  "ccp-gpt elevates Sol to xhigh effort" \
+  "ccp-gpt uses the shared effort helper" \
   "${functions[ccp-gpt]}" \
-  '[[ "$ANTHROPIC_MODEL" == gpt-5.6-sol* ]] && main_effort=xhigh'
+  'main_effort=$(_ccp_effort_for_model "$ANTHROPIC_MODEL")'
+
+assert_contains \
+  "ccp-gpt keeps medium fallback for model overrides" \
+  "${functions[ccp-gpt]}" \
+  '[[ -z "$main_effort" ]] && main_effort=medium'
 
 assert_contains \
   "ccp-gpt launches with model-selected effort" \
