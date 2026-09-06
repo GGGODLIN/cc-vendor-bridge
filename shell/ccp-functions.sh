@@ -1635,6 +1635,7 @@ ccp-mix-gpt() {
     local main_model="${ANTHROPIC_MODEL:-gpt-6-astra}"
     local main_label="$main_model"
     [[ "$main_model" == "gpt-6-astra" ]] && main_label="GPT-6 Astra"
+    [[ "$main_model" == "gpt-5.6-sol" ]] && main_label="GPT-5.6 Sol"
     print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
     ccp-free-whoami ccp-mix-gpt
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
@@ -1646,7 +1647,7 @@ ccp-mix-gpt() {
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL="$main_model"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL='gpt-6-astra'
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-6-astra}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
@@ -1656,6 +1657,20 @@ ccp-mix-gpt() {
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
     command "$claude_bin" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+  )
+}
+
+# Roll the mixed-tier flagship back to 5.6-Sol without editing ccp-mix-gpt.
+# Only the FABLE seat moves; main follows ANTHROPIC_MODEL, so presetting it here
+# keeps the astra default intact for a following bare ccp-mix-gpt. Fleet slots
+# (OPUS/SONNET/HAIKU/subagents → free(max)) never referenced FABLE and stay put.
+# Sits next to ccp-sol for the same reason: astra per-token is sol's 2.5x, so
+# the cheapest subscription-billed brain that still reads as GPT wins the seat.
+ccp-mix-sol() {
+  (
+    ANTHROPIC_MODEL=gpt-5.6-sol \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=gpt-5.6-sol \
+      ccp-mix-gpt "$@"
   )
 }
 
@@ -1688,6 +1703,8 @@ Available cc-vendor-bridge functions:
   ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-6-astra, OPUS/SONNET/HAIKU+subagents→free(max)
                       (= same free chain: Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek, :8317)
                       480K context window (shared free-chain ceiling)
+  ccp-mix-sol       → ccp-mix-gpt with the flagship seats rolled back to gpt-5.6-sol
+                      (FABLE+main→sol, fleet slots stay on free(max))
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-6-astra;
                       priority service tier for all Codex requests
   ccp-gpt-smart     → All model slots forced to gpt-6-astra on the Standard service tier

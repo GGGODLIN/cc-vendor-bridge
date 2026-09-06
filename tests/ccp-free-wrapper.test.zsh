@@ -687,16 +687,16 @@ setup_fixture
 : > "$FIXTURE/ready"
 invoke_wrapper ready '' ccp-mix-gpt selector
 assert_status 'mixed wrapper selector fallback returns success' 0
-assert_output_contains 'mixed wrapper reports GPT main route' '[ccp-mix-gpt] Main：GPT-5.6 Sol'
+assert_output_contains 'mixed wrapper reports GPT main route' '[ccp-mix-gpt] Main：GPT-6 Astra'
 assert_output_contains 'mixed wrapper reuses free pool summary' '[ccp-mix-gpt] 服務中：GLM 帳號池（free(max)）'
-assert_output_count 'mixed wrapper reports GPT main once' '[ccp-mix-gpt] Main：GPT-5.6 Sol' 1
+assert_output_count 'mixed wrapper reports GPT main once' '[ccp-mix-gpt] Main：GPT-6 Astra' 1
 assert_output_count 'mixed wrapper queries free status once' '[ccp-mix-gpt] 服務中：GLM 帳號池（free(max)）' 1
 assert_output_not_contains 'mixed wrapper output omits client key' "$CC_KEY"
 assert_output_not_contains 'mixed wrapper output omits account email' 'alpha@example.test'
 assert_output_not_contains 'mixed wrapper output omits refresh token canary' 'REFRESH-CANARY'
 assert_output_not_contains 'mixed wrapper output omits account ID canary' 'ACCOUNT-CANARY'
 assert_output_not_contains 'mixed wrapper output omits nested canary' 'NESTED-CANARY'
-assert_file_line 'mixed wrapper keeps GPT main model' "$FIXTURE/capture.log" 'model=gpt-5.6-sol'
+assert_file_line 'mixed wrapper keeps GPT main model' "$FIXTURE/capture.log" 'model=gpt-6-astra'
 assert_file_line 'mixed wrapper marks GPT main for startup convergence' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
 assert_file_line 'mixed wrapper keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 assert_file_line 'mixed wrapper keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
@@ -708,7 +708,7 @@ setup_fixture
 invoke_wrapper ready '' ccp-mix-gpt
 assert_status 'mixed wrapper survives status failure' 0
 assert_output_contains 'mixed wrapper prefixes status failure' '[ccp-mix-gpt] 無法查詢免費池狀態'
-assert_file_line 'mixed status failure preserves GPT main' "$FIXTURE/capture.log" 'model=gpt-5.6-sol'
+assert_file_line 'mixed status failure preserves GPT main' "$FIXTURE/capture.log" 'model=gpt-6-astra'
 assert_file_line 'mixed status failure still invokes claude' "$FIXTURE/capture.log" 'called=1'
 teardown_fixture
 
@@ -721,6 +721,32 @@ assert_output_not_contains 'mixed main summary does not claim default Sol' '[ccp
 assert_file_line 'mixed main override reaches claude' "$FIXTURE/capture.log" 'model=ds-free'
 assert_file_line 'mixed non-GPT override keeps the generic vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix'
 assert_file_line 'mixed main override preserves free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
+teardown_fixture
+
+print -r -- '── ccp-mix-sol rollback'
+setup_fixture
+: > "$FIXTURE/ready"
+invoke_wrapper ready '' ccp-mix-sol selector
+assert_status 'mix-sol wrapper returns success' 0
+assert_output_contains 'mix-sol wrapper reports Sol main route' '[ccp-mix-gpt] Main：GPT-5.6 Sol'
+assert_file_line 'mix-sol pins main to sol' "$FIXTURE/capture.log" 'model=gpt-5.6-sol'
+assert_file_line 'mix-sol pins FABLE to sol' "$FIXTURE/capture.log" 'fable_model=gpt-5.6-sol'
+assert_file_line 'mix-sol keeps GPT vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
+assert_file_line 'mix-sol keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
+assert_file_line 'mix-sol keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+invoke_wrapper ready '' ccp-mix-sol
+assert_status 'mix-sol direct mode returns success' 0
+assert_file_line 'mix-sol overrides outer FABLE preset' "$FIXTURE/capture.log" 'fable_model=gpt-5.6-sol'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+invoke_wrapper ready '' ccp-mix-gpt selector
+assert_file_line 'bare mix-gpt ignores mix-sol FABLE preset' "$FIXTURE/capture.log" 'fable_model=outer-fable-model'
 teardown_fixture
 
 print -r -- '── outer model override passthrough'
