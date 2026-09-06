@@ -60,9 +60,19 @@ assert_not_contains \
   "ultracode"
 
 assert_contains \
-  "ccp-gpt defaults Astra to xhigh effort" \
+  "ccp-gpt defaults Astra to medium effort" \
   "${functions[ccp-gpt]}" \
-  "_cc_vendor_claude --effort xhigh"
+  "local main_effort=medium"
+
+assert_contains \
+  "ccp-gpt elevates Sol to xhigh effort" \
+  "${functions[ccp-gpt]}" \
+  '[[ "$ANTHROPIC_MODEL" == gpt-5.6-sol* ]] && main_effort=xhigh'
+
+assert_contains \
+  "ccp-gpt launches with model-selected effort" \
+  "${functions[ccp-gpt]}" \
+  '_cc_vendor_claude --effort "$main_effort"'
 
 assert_contains \
   "ccp-gpt maps Opus to Luna at max effort" \

@@ -1106,7 +1106,9 @@ ccp-gpt() {
     # ~/.claude/hooks/gpt-convergence-reminder.sh carries the same rules on the
     # SessionStart(compact) path for GPT sessions this launcher did not start.
     local _rules="背景工作等待：Agent 與背景 Bash 完成時，harness 會自動送 task-notification 回來喚醒 session，不需要主動確認。派工後直接進行下一件不相依的工作，不要用 TaskOutput block=true 站著等結果；只有在沒有其他可做的事、且必須拿到該結果才能繼續時才查一次，查完仍未完成就回去做別的，不要連續輪詢。撞錯先修根因：遇到格式、參數、路徑、空行這類小失敗，先判斷根因是否三行內可修，可修就直接修，不要因為一個小錯改走另一條執行路徑（改跑 headless claude -p、換一套工具鏈、繞去別的入口）——換路會帶進一整組新的失敗模式，而原始根因仍未解決；確實需要換路時，先說明為什麼根因不可修，再換。人類專屬點交還上限：撞到只有使用者能做或能拍板的事（sudo／GUI 操作／互動式 auth／憑證設定／系統升級，或範圍・權威・對外行為・風險的拍板），同一點最多嘗試 2 次，用盡即交還、不得換路硬撐。交還內容自包含（讀的人沒有你的對話與檔案）：脈絡一句／每個選項附一句後果／建議＋理由一句；能標假設續跑的先列「我假設 1…N」續跑，不能的就收工。"
-    _cc_vendor_claude --effort xhigh --model "$ANTHROPIC_MODEL" \
+    local main_effort=medium
+    [[ "$ANTHROPIC_MODEL" == gpt-5.6-sol* ]] && main_effort=xhigh
+    _cc_vendor_claude --effort "$main_effort" --model "$ANTHROPIC_MODEL" \
       --disallowed-tools 'WebSearch' \
       --append-system-prompt "${_rules}IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面三條逐字放進它們的 prompt。互動模式下 subagent 不會繼承本注入，只有 --print 模式才會。" \
       --append-subagent-system-prompt "$_rules" \
@@ -1698,7 +1700,7 @@ Available cc-vendor-bridge functions:
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
   ccp-gpt           → CLIProxyAPI relay, cross-gen slot mapping (FABLE→astra / OPUS+SONNET+HAIKU→luna(max),
-                      Astra effort xhigh / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
+                      Astra effort medium / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
   ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-6-astra, OPUS/SONNET/HAIKU+subagents→free(max)
                       (= same free chain: Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek, :8317)
@@ -1709,7 +1711,7 @@ Available cc-vendor-bridge functions:
                       priority service tier for all Codex requests
   ccp-gpt-smart     → All model slots forced to gpt-6-astra on the Standard service tier
   ccp-sol           → Pre-Astra rollback: ccp-gpt routing with FABLE+main on gpt-5.6-sol
-                      and the picker option on sol-fast (fleet slots unchanged)
+                      at xhigh and the picker option on sol-fast (fleet slots unchanged)
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
   ccp-gpt-relogin   → Re-auth a Codex account AND restore the priority that --codex-login
