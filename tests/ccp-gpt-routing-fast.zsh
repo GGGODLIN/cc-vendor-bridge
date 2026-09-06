@@ -60,7 +60,7 @@ assert_not_contains \
   "ultracode"
 
 assert_contains \
-  "ccp-gpt defaults Sol to xhigh effort" \
+  "ccp-gpt defaults Astra to xhigh effort" \
   "${functions[ccp-gpt]}" \
   "_cc_vendor_claude --effort xhigh"
 
@@ -99,15 +99,15 @@ assert_contains \
 assert_not_contains \
   "ccp-list does not recommend the persistent direct model command" \
   "$ccp_list_output" \
-  "/model gpt-5.6-sol-fast"
+  "/model gpt-6-astra-fast"
 
 assert_contains \
   "ccp-list explains only the Fast Opus routing delta" \
   "$ccp_list_output" \
-  "Same routing and context as ccp-gpt, except Opus defaults to gpt-5.6-sol"
+  "Same routing and context as ccp-gpt, except Opus defaults to gpt-6-astra"
 
 assert_contains \
-  "ccp-list describes the all-Sol Standard wrapper" \
+  "ccp-list describes the all-Astra Standard wrapper" \
   "$ccp_list_output" \
   "ccp-gpt-smart"
 
@@ -119,8 +119,8 @@ if (( ${+functions[ccp-gpt-fast]} )); then
   unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_CUSTOM_HEADERS
 
   assert_eq \
-    "ccp-gpt-fast maps Opus to Sol and adds the opt-in header" \
-    "gpt-5.6-sol|X-CCP-Fast: 1" \
+    "ccp-gpt-fast maps Opus to Astra and adds the opt-in header" \
+    "gpt-6-astra|X-CCP-Fast: 1" \
     "$(ccp-gpt-fast)"
 
   assert_eq \
@@ -130,7 +130,7 @@ if (( ${+functions[ccp-gpt-fast]} )); then
 
   assert_eq \
     "ccp-gpt-fast preserves existing custom headers" \
-    $'gpt-5.6-sol|X-Existing: yes\nX-CCP-Fast: 1' \
+    $'gpt-6-astra|X-Existing: yes\nX-CCP-Fast: 1' \
     "$(ANTHROPIC_CUSTOM_HEADERS='X-Existing: yes' ccp-gpt-fast)"
 else
   print -ru2 -- "not ok - ccp-gpt-fast exists"
@@ -147,21 +147,39 @@ if (( ${+functions[ccp-gpt-smart]} )); then
   unset CLAUDE_CODE_SUBAGENT_MODEL ANTHROPIC_CUSTOM_HEADERS
 
   assert_eq \
-    "ccp-gpt-smart forces every model slot to Standard Sol" \
-    "gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|" \
+    "ccp-gpt-smart forces every model slot to Standard Astra" \
+    "gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|" \
     "$(ccp-gpt-smart)"
 
   assert_eq \
     "ccp-gpt-smart overrides inherited model routing" \
-    "gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|" \
+    "gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|" \
     "$(ANTHROPIC_MODEL=gpt-5.6-sol-fast ANTHROPIC_DEFAULT_FABLE_MODEL=claude-fable-5 ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_SONNET_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_HAIKU_MODEL='gpt-5.6-luna(max)' CLAUDE_CODE_SUBAGENT_MODEL='gpt-5.6-luna(max)' ccp-gpt-smart)"
 
   assert_eq \
     "ccp-gpt-smart removes inherited Fast header and preserves other headers" \
-    $'gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-sol|X-Existing: yes' \
+    $'gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|X-Existing: yes' \
     "$(ANTHROPIC_CUSTOM_HEADERS=$'X-Existing: yes\nX-CCP-Fast: 1' ccp-gpt-smart)"
 else
   print -ru2 -- "not ok - ccp-gpt-smart exists"
+  (( failures++ ))
+fi
+
+if (( ${+functions[ccp-sol]} )); then
+  ccp-gpt() {
+    print -r -- "${ANTHROPIC_MODEL:-}|${ANTHROPIC_DEFAULT_FABLE_MODEL:-}|${ANTHROPIC_DEFAULT_OPUS_MODEL:-}|${ANTHROPIC_DEFAULT_SONNET_MODEL:-}|${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}|${CLAUDE_CODE_SUBAGENT_MODEL:-}|${ANTHROPIC_CUSTOM_MODEL_OPTION:-}|${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-}"
+  }
+
+  unset ANTHROPIC_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL
+  unset ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
+  unset CLAUDE_CODE_SUBAGENT_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION ANTHROPIC_CUSTOM_MODEL_OPTION_NAME
+
+  assert_eq \
+    "ccp-sol rolls main routing back to Sol and keeps Luna fleet" \
+    "gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-luna(max)|gpt-5.6-luna(max)|gpt-5.6-luna(max)|gpt-5.6-luna(max)|gpt-5.6-sol-fast|GPT-5.6 Sol Fast" \
+    "$(ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_SONNET_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_HAIKU_MODEL='gpt-5.6-luna(max)' CLAUDE_CODE_SUBAGENT_MODEL='gpt-5.6-luna(max)' ccp-sol)"
+else
+  print -ru2 -- "not ok - ccp-sol exists"
   (( failures++ ))
 fi
 
