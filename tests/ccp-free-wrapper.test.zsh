@@ -772,4 +772,80 @@ assert_file_line 'outer model wins the CLI flag' "$FIXTURE/capture.log" 'arg2=ds
 assert_file_line 'vendor defaults still pin free(max)' "$FIXTURE/capture.log" "fable_model=$MODEL"
 teardown_fixture
 
+print -r -- '── DeepSeek weight probe (8h cache)'
+WEIGHT_DIR="$(mktemp -d)"
+mkdir -p "$WEIGHT_DIR/bin"
+cat > "$WEIGHT_DIR/config.yaml" <<'YAML'
+  - name: "cline-free-proxy"
+    priority: 30
+    base-url: "http://127.0.0.1:3457/v1"
+    api-key-entries:
+      - api-key: "stub-key"
+    models:
+      - name: "deepseek/deepseek-v4-flash"
+        alias: "ds-flash"
+YAML
+cat > "$WEIGHT_DIR/bin/curl" <<'STUB'
+#!/usr/bin/env zsh
+print -r -- "called" >> "$CCP_FREE_CURL_LOG"
+print -r -- '{"model":"deepseek/deepseek-v4-flash-0731","provider":"Reka"}'
+STUB
+cat > "$WEIGHT_DIR/bin/curl-fail" <<'STUB'
+#!/usr/bin/env zsh
+print -r -- "called" >> "$CCP_FREE_CURL_LOG"
+exit 22
+STUB
+chmod +x "$WEIGHT_DIR/bin/curl" "$WEIGHT_DIR/bin/curl-fail"
+
+probe_weight() {
+  local cache="$1" curl_bin="$2" now_epoch="$3"
+  WEIGHT_OUTPUT=$(
+    CCP_FREE_WEIGHT_CACHE_FILE="$cache" \
+    CCP_FREE_CURL_BIN="$WEIGHT_DIR/bin/$curl_bin" \
+    CCP_FREE_CURL_LOG="$WEIGHT_DIR/curl.log" \
+    CCP_FREE_CONFIG_FILE="$WEIGHT_DIR/config.yaml" \
+    CCP_FREE_NOW_EPOCH="$now_epoch" \
+    zsh -c "source '$SRC' && _ccp_free_ds_weight ccp-free" 2>&1
+  )
+}
+
+assert_weight() {
+  local label="$1" needle="$2"
+  if [[ "$WEIGHT_OUTPUT" == *"$needle"* ]]; then
+    ok "$label"
+  else
+    bad "$label"
+    print -ru2 -- "    expected substring: $needle"
+    print -ru2 -- "    actual: $WEIGHT_OUTPUT"
+  fi
+}
+
+: > "$WEIGHT_DIR/curl.log"
+probe_weight "$WEIGHT_DIR/cache" curl 1000000
+assert_weight 'cold probe reports the dated build' 'deepseek/deepseek-v4-flash-0731'
+assert_weight 'cold probe marks it as fresh' '剛剛探測'
+assert_line_count 'cold probe hits the network once' "$WEIGHT_DIR/curl.log" 1
+
+rm -f "$WEIGHT_DIR/curl.log"
+probe_weight "$WEIGHT_DIR/cache" curl 1025200
+assert_weight 'warm cache still reports the build' 'deepseek/deepseek-v4-flash-0731'
+assert_weight 'warm cache reports its age' '420 分鐘前探測'
+assert_file_absent 'warm cache skips the network entirely' "$WEIGHT_DIR/curl.log"
+
+: > "$WEIGHT_DIR/curl.log"
+probe_weight "$WEIGHT_DIR/cache" curl 1032400
+assert_weight 'expired cache re-probes' '剛剛探測'
+assert_line_count 'expired cache hits the network once' "$WEIGHT_DIR/curl.log" 1
+
+: > "$WEIGHT_DIR/curl.log"
+probe_weight "$WEIGHT_DIR/cache" curl-fail 1100000
+assert_weight 'failed probe falls back to the stale value' 'deepseek/deepseek-v4-flash-0731'
+assert_weight 'failed probe discloses the staleness' '探測失敗，沿用'
+
+: > "$WEIGHT_DIR/curl.log"
+probe_weight "$WEIGHT_DIR/absent-cache" curl-fail 1100000
+assert_weight 'failed probe with no cache reports unknown' '未知（探測失敗）'
+
+rm -R "$WEIGHT_DIR"
+
 (( FAILURES == 0 ))

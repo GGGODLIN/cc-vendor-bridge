@@ -1299,6 +1299,83 @@ ccp-gemini-flash() {
   )
 }
 
+# ===== free pool: which DeepSeek weights are actually behind ds-flash =====
+# The provider only exposes the undated id `deepseek/deepseek-v4-flash` in
+# /v1/models; the dated build (…-0731) appears ONLY in the `model` field of a
+# real completion response, so this costs one request. DeepSeek V4.1 Flash
+# shipped 2026-09-10 and the third-party hosts behind the free pool had not
+# picked it up (probed 2026-09-10: /v1/models listed no 4.1 entry), so the line
+# doubles as the switchover signal — when it stops saying -0731, the config.yaml
+# aliases probably need repointing at a new id.
+#
+# 8h cache keeps startup free: at most one probe per session-day, and a stale
+# hit is printed with its age rather than triggering a re-probe storm.
+# max_tokens must stay well above the reasoning budget — a probe at 10 returned
+# `empty response content` 500 three times out of three (2026-09-10).
+_ccp_free_ds_weight() {
+  local caller="$1"
+  local cache_file="${CCP_FREE_WEIGHT_CACHE_FILE:-$HOME/.cache/cc-vendor-bridge/ds-flash-weight}"
+  local ttl="${CCP_FREE_WEIGHT_TTL:-28800}"
+  local curl_bin="${CCP_FREE_CURL_BIN:-/usr/bin/curl}"
+  local config_file="${CCP_FREE_CONFIG_FILE:-$HOME/.cli-proxy-api/config.yaml}"
+  local now_epoch="${CCP_FREE_NOW_EPOCH:-$(date +%s)}"
+
+  local cached_epoch='' cached_model='' cached_provider=''
+  if [[ -r "$cache_file" ]]; then
+    IFS=$'\t' read -r cached_epoch cached_model cached_provider < "$cache_file"
+  fi
+
+  if [[ -n "$cached_model" && -n "$cached_epoch" ]] \
+    && (( now_epoch - cached_epoch < ttl )); then
+    local age_min=$(( (now_epoch - cached_epoch) / 60 ))
+    print -P "[$caller] DeepSeek 實際權重：${cached_model}（provider=${cached_provider:-?}，${age_min} 分鐘前探測）" >&2
+    return 0
+  fi
+
+  local base_url api_key
+  IFS=$'\t' read -r base_url api_key <<< "$(awk '
+    BEGIN { in_target = 0; base = ""; key = "" }
+    /^  - name:/ {
+      if (in_target && base != "" && key != "") exit
+      in_target = ($0 ~ /"cline-free-proxy"/)
+      next
+    }
+    in_target && /^[[:space:]]+base-url:/ {
+      line = $0; sub(/^.*base-url:[[:space:]]*"?/, "", line); sub(/"?[[:space:]]*$/, "", line); base = line
+    }
+    in_target && /^[[:space:]]+- api-key:/ {
+      line = $0; sub(/^.*api-key:[[:space:]]*"?/, "", line); sub(/"?[[:space:]]*$/, "", line); key = line
+    }
+    END { print base "\t" key }
+  ' "$config_file" 2>/dev/null)"
+
+  local probed=''
+  if [[ -n "$base_url" && -n "$api_key" ]]; then
+    probed=$("$curl_bin" -fsS --max-time 20 "${base_url%/}/chat/completions" \
+      -H "Authorization: Bearer $api_key" \
+      -H 'Content-Type: application/json' \
+      -d '{"model":"deepseek/deepseek-v4-flash","max_tokens":64,"messages":[{"role":"user","content":"ok"}]}' \
+      2>/dev/null | jq -r 'select(.model != null) | "\(.model)\t\(.provider // "?")"' 2>/dev/null)
+  fi
+
+  if [[ -n "$probed" ]]; then
+    local probed_model probed_provider
+    IFS=$'\t' read -r probed_model probed_provider <<< "$probed"
+    mkdir -p "${cache_file:h}" 2>/dev/null
+    printf '%s\t%s\t%s\n' "$now_epoch" "$probed_model" "$probed_provider" > "$cache_file" 2>/dev/null
+    print -P "[$caller] DeepSeek 實際權重：${probed_model}（provider=${probed_provider}，剛剛探測）" >&2
+    return 0
+  fi
+
+  if [[ -n "$cached_model" ]]; then
+    local stale_hr=$(( (now_epoch - cached_epoch) / 3600 ))
+    print -P "%F{yellow}[$caller] DeepSeek 實際權重：${cached_model}（探測失敗，沿用 ${stale_hr} 小時前的快取）%f" >&2
+  else
+    print -P "%F{yellow}[$caller] DeepSeek 實際權重：未知（探測失敗）%f" >&2
+  fi
+  return 0
+}
+
 ccp-free-whoami() {
   local caller="${1:-ccp-free}"
   local accounts_file="${CCP_FREE_ACCOUNTS_FILE:-$HOME/.cline2api/.cline-accounts.json}"
@@ -1542,6 +1619,8 @@ ccp-free-whoami() {
   if (( account_total > glm_available )); then
     print -P "%F{yellow}[$caller] ⚠️  GLM 帳號池：${glm_available}/${account_total} 可用，其餘 cooldown／daily limit%f" >&2
   fi
+
+  [[ "$free_route_chain" == *"Cline DeepSeek"* ]] && _ccp_free_ds_weight "$caller"
 
   if [[ "$freellmapi_state" == "disabled" ]]; then
     print -P "[$caller] FreeLLMAPI：已停用，不在目前路由" >&2
