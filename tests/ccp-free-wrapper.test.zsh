@@ -1,14 +1,16 @@
 #!/usr/bin/env zsh
 # 本檔在契約測試底下：改完必跑（從 repo root）：zsh tests/ccp-free-wrapper.test.zsh
-# 契約（2026-08-29 改版）：ccp-free 與 ccp-mix-gpt 共用 CLIProxyAPI :8317 的 free(max) chain：
-# Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek；offline FreeLLMAPI 不屬於有效備援。
+# 契約（2026-09-11 改版）：ccp-free 與 ccp-mix-gpt 共用 CLIProxyAPI :8317 的 free(max) chain：
+# WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM；offline FreeLLMAPI 不屬於有效備援。
 set -u
 
 ROOT="${0:A:h:h}"
 SRC="$ROOT/shell/ccp-functions.sh"
 MODEL='free(max)'
 CC_KEY='test-cc-key'
+WB_KEY='sk-cli2api-canary-key'
 CC_URL='http://127.0.0.1:8317'
+WB_URL='http://127.0.0.1:3010'
 FAILURES=0
 FIXTURE=''
 WRAPPER_STATUS=0
@@ -110,6 +112,8 @@ setup_fixture() {
     printf 'CLIPROXY_MGMT_KEY=mgmt-test\n'
     printf 'CLIPROXY_KEY_ADMIN=sk-admin-test\n'
     printf 'CLIPROXY_KEY_CC=%s\n' "$CC_KEY"
+    printf 'CLI2API_BASE_URL=%s\n' "$WB_URL"
+    printf 'CLI2API_API_KEY=%s\n' "$WB_KEY"
   } > "$FIXTURE/keys.env"
   cat > "$FIXTURE/accounts.json" <<'JSON'
 {
@@ -149,31 +153,40 @@ JSON
   }
 ]
 JSON
+  cat > "$FIXTURE/workbuddy-accounts.json" <<'JSON'
+{"data":[{"id":"acc_wb_test","provider":"workbuddy","name":"WorkBuddy Test","enabled":true,"status":"ready","ready":true,"runtime_state":"ready","quota":{"used":0,"total":350,"remaining":350,"unit":"credits","exceeded":false}}],"object":"list"}
+JSON
   cat > "$FIXTURE/config.yaml" <<'YAML'
 openai-compatibility:
+  - name: "workbuddy-v41"
+    priority: 40
+    disabled: false
+    models:
+      - name: "workbuddy/deepseek-v4.1-flash"
+        alias: "free"
   - name: "cline-free-glm"
     priority: 30
     disabled: false
     models:
       - name: "free-glm"
         alias: "free"
-  - name: "bai-glm"
-    priority: 25
+  - name: "cline-free-ds"
+    priority: 27
     disabled: false
     models:
-      - name: "bai-glm"
+      - name: "free-ds"
         alias: "free"
   - name: "agentrouter-glm"
-    priority: 20
+    priority: 25
     disabled: false
     models:
       - name: "agentrouter-glm"
         alias: "free"
-  - name: "cline-free-ds"
-    priority: 10
+  - name: "bai-glm"
+    priority: 20
     disabled: false
     models:
-      - name: "free-ds"
+      - name: "bai-glm"
         alias: "free"
   - name: "freellmapi"
     disabled: true
@@ -214,15 +227,45 @@ fi
 exit 1'
   write_executable "$FIXTURE/bin/curl" '#!/bin/sh
 printf "%s\n" "$*" >> "$CCP_FREE_CURL_LOG"
-last=""
+out="/dev/null"
+url=""
+first=1
 for arg in "$@"; do
-  last="$arg"
+  if [ "$first" = "0" ] && [ "${prev-}" = "-o" ]; then
+    out="$arg"
+  fi
+  prev="$arg"
+  first=0
+  url="$arg"
 done
-if [ -n "${CCP_FREE_CURL_FAIL_URL:-}" ] && [ "$last" = "$CCP_FREE_CURL_FAIL_URL" ]; then
+if [ -n "${CCP_FREE_CURL_FAIL_URL:-}" ] && [ "$url" = "$CCP_FREE_CURL_FAIL_URL" ]; then
   exit 7
 fi
-case "$last" in
+case "$url" in
   *"/health/liveliness") exit 0 ;;
+  *"$CCP_FREE_WORKBUDDY_HEALTH_URL")
+    if [ "${CCP_FREE_WB_HEALTH:-up}" = "up" ]; then
+      if [ "$out" = "/dev/null" ] || [ -z "$out" ]; then
+        printf "%s" "{\"ok\":true,\"service\":\"cli2api\",\"providers\":[\"workbuddy\"]}"
+      else
+        printf "%s" "{\"ok\":true,\"service\":\"cli2api\",\"providers\":[\"workbuddy\"]}" > "$out"
+      fi
+      exit 0
+    fi
+    exit 7 ;;
+  *"$CCP_FREE_WORKBUDDY_ACCOUNTS_URL")
+    case "${CCP_FREE_WB_ACCOUNTS:-ready}" in
+      ready)  content="$(cat "$CCP_FREE_WORKBUDDY_ACCOUNTS_FILE")" ;;
+      noready) content="{\"data\":[{\"id\":\"acc_wb_test\",\"provider\":\"workbuddy\",\"status\":\"ready\",\"ready\":false,\"runtime_state\":\"stopped\",\"quota\":{\"used\":0,\"total\":350,\"remaining\":0,\"unit\":\"credits\"}}],\"object\":\"list\"}" ;;
+      empty)  content="{\"data\":[],\"object\":\"list\"}" ;;
+      *)      content="$(cat "$CCP_FREE_WORKBUDDY_ACCOUNTS_FILE")" ;;
+    esac
+    if [ "$out" = "/dev/null" ] || [ -z "$out" ]; then
+      printf "%s" "$content"
+    else
+      printf "%s" "$content" > "$out"
+    fi
+    exit 0 ;;
   *) exit 7 ;;
 esac'
   write_executable "$FIXTURE/bin/launchctl" '#!/bin/sh
@@ -297,6 +340,9 @@ invoke_wrapper() {
     export CCP_FREE_CURL_LOG="$FIXTURE/curl.log"
     export CCP_FREE_BAI_LIVELINESS_URL='http://127.0.0.1:8000/health/liveliness'
     export CCP_FREE_AGENTROUTER_LIVELINESS_URL='http://127.0.0.1:8002/health/liveliness'
+    export CCP_FREE_WORKBUDDY_HEALTH_URL="$WB_URL/health"
+    export CCP_FREE_WORKBUDDY_ACCOUNTS_URL="$WB_URL/api/accounts"
+    export CCP_FREE_WORKBUDDY_ACCOUNTS_FILE="$FIXTURE/workbuddy-accounts.json"
     export CCP_FREE_NOW='2026-08-29T21:00:00'
     export CCP_FREE_SINCE='2026-08-29T20:00:00'
     export ANTHROPIC_API_KEY='outer-paid-key'
@@ -330,7 +376,7 @@ if [[ "$LIST_OUTPUT" == *'ccp-free'* ]]; then
 else
   bad 'ccp-list exposes ccp-free'
 fi
-if [[ "$LIST_OUTPUT" == *'Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek'* ]]; then
+if [[ "$LIST_OUTPUT" == *'WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM'* ]]; then
   ok 'ccp-list identifies the current free chain'
 else
   bad 'ccp-list identifies the current free chain'
@@ -399,19 +445,21 @@ setup_fixture
 : > "$FIXTURE/ready"
 invoke_wrapper ready
 assert_status 'pinned invocation returns success' 0
-assert_output_contains 'free pool reports observed GLM service' '[ccp-free] 服務中：GLM 帳號池（free(max)）'
-assert_output_contains 'free pool counts unused active GLM accounts' '3/3 帳號可用'
-assert_output_contains 'Cline GLM reports raw observed timestamp' '最近 success 2026-08-29T20:30:00+08:00'
+assert_output_contains 'WorkBuddy primary leaves Cline GLM on standby' '[ccp-free] 備援待命：Cline GLM — 3/3 帳號可用；最近 success 2026-08-29T20:30:00+08:00'
 assert_output_contains 'B.AI reports passive local and observed status' '[ccp-free] B.AI GLM：gateway up；2 deployments；最近 success 2026-08-29T20:35:06+08:00；quota unknown'
 assert_output_contains 'AgentRouter reports passive local and observed status' '[ccp-free] AgentRouter GLM：gateway up；2 deployments；最近 failure 2026-08-29T20:40:04+08:00；quota／cooldown unknown'
-assert_output_contains 'free pool reports DeepSeek standby' '[ccp-free] 備援待命：DeepSeek — 3/3 帳號可用；最近 unknown'
+assert_output_contains 'free pool reports Cline DeepSeek standby' '[ccp-free] 備援待命：Cline DeepSeek — 3/3 帳號可用；最近 unknown'
 assert_file_line 'B.AI checks only local liveliness' "$FIXTURE/curl.log" '-fsS --max-time 1 -o /dev/null http://127.0.0.1:8000/health/liveliness'
 assert_file_line 'AgentRouter checks only local liveliness' "$FIXTURE/curl.log" '-fsS --max-time 1 -o /dev/null http://127.0.0.1:8002/health/liveliness'
-assert_line_count 'passive summary performs two local liveliness checks' "$FIXTURE/curl.log" 2
+assert_line_count 'passive summary performs four local probes' "$FIXTURE/curl.log" 4
+assert_file_line 'WorkBuddy accounts probe sends its bearer credential' "$FIXTURE/curl.log" "-fsS --max-time 2 -H Authorization: Bearer $WB_KEY $WB_URL/api/accounts"
 assert_output_contains 'free pool reports disabled FreeLLMAPI' '[ccp-free] FreeLLMAPI：已停用'
+assert_output_contains 'WorkBuddy reports the sidecar and account health' '[ccp-free] WorkBuddy V4.1：sidecar up；1/1 帳號 ready；350/350 credits remaining；model route 未探活'
+assert_output_contains 'WorkBuddy is the first owner so predicts itself' '[ccp-free] 預計使用：WorkBuddy V4.1（free(max)）'
 assert_output_not_contains 'healthy free pool omits warning marker' '⚠️'
 assert_output_not_contains 'free pool output omits client key' "$CC_KEY"
 assert_output_not_contains 'free pool output omits management key' 'mgmt-test'
+assert_output_not_contains 'workbuddy summary omits CLI2API key' "$WB_KEY"
 assert_output_not_contains 'free pool output omits account email' 'alpha@example.test'
 assert_output_not_contains 'free pool output omits secondary email' 'beta@example.test'
 assert_output_not_contains 'free pool output omits unused account email' 'gamma@example.test'
@@ -430,9 +478,9 @@ assert_file_line 'FABLE model is hard-pinned free(max)' "$FIXTURE/capture.log" "
 assert_file_line 'OPUS model is hard-pinned free(max)' "$FIXTURE/capture.log" "opus_model=$MODEL"
 assert_file_line 'SONNET model is hard-pinned free(max)' "$FIXTURE/capture.log" "sonnet_model=$MODEL"
 assert_file_line 'HAIKU model is hard-pinned free(max)' "$FIXTURE/capture.log" "haiku_model=$MODEL"
-assert_file_line 'custom free-chain option is exposed' "$FIXTURE/capture.log" 'custom_option=free(max)'
-assert_file_line 'custom option names the current free chain' "$FIXTURE/capture.log" 'custom_name=Free chain (Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek)'
-assert_file_line 'custom option describes the configured free chain' "$FIXTURE/capture.log" 'custom_description=Cline GLM first; B.AI GLM next; AgentRouter GLM next; Cline DeepSeek last'
+assert_file_line 'custom free-chain option keeps the pooled alias' "$FIXTURE/capture.log" 'custom_option=free(max)'
+assert_file_line 'custom option names the current free chain' "$FIXTURE/capture.log" 'custom_name=Free chain (WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM)'
+assert_file_line 'custom option describes the configured free chain' "$FIXTURE/capture.log" 'custom_description=WorkBuddy V4.1 first; Cline GLM next; Cline DeepSeek next; AgentRouter GLM next; B.AI GLM last'
 assert_file_line 'subagent model is hard-pinned free(max)' "$FIXTURE/capture.log" "subagent_model=$MODEL"
 assert_file_line 'free pool extends async agent watchdog to 15 minutes' "$FIXTURE/capture.log" 'async_agent_stall_timeout=900000'
 assert_file_line 'context window matches GLM metadata' "$FIXTURE/capture.log" 'max_context_tokens=1048576'
@@ -447,13 +495,146 @@ assert_file_line 'WebSearch tool name follows' "$FIXTURE/capture.log" 'arg4=WebS
 assert_file_line 'caller arguments are preserved' "$FIXTURE/capture.log" 'arg5=--print'
 teardown_fixture
 
+print -r -- '── WorkBuddy V4.1 health'
+setup_fixture
+: > "$FIXTURE/ready"
+export CCP_FREE_WB_HEALTH=down
+invoke_wrapper ready
+unset CCP_FREE_WB_HEALTH
+assert_status 'workbuddy sidecar down still launches' 0
+assert_output_contains 'sidecar down reports WorkBuddy unavailable' '[ccp-free] WorkBuddy V4.1：sidecar down（不可用）'
+assert_output_contains 'sidecar down predicts the next free leg' '[ccp-free] 預計切換：Cline GLM'
+assert_output_not_contains 'sidecar down does not claim WorkBuddy in use' '[ccp-free] 預計使用：WorkBuddy V4.1'
+assert_file_line 'sidecar down still invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+export CCP_FREE_WB_HEALTH=up
+export CCP_FREE_WB_ACCOUNTS=noready
+invoke_wrapper ready
+unset CCP_FREE_WB_HEALTH CCP_FREE_WB_ACCOUNTS
+assert_status 'workbuddy with no ready account still launches' 0
+assert_output_contains 'sidecar up but no ready account reports unavailable' 'sidecar up；0/1 帳號 ready（不可用）'
+assert_output_contains 'no ready account predicts the next free leg' '[ccp-free] 預計切換：Cline GLM'
+assert_file_line 'no ready account still invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+cat > "$FIXTURE/config.yaml" <<'YAML'
+openai-compatibility:
+  - name: "cline-free-glm"
+    priority: 30
+    disabled: false
+    models:
+      - name: "free-glm"
+        alias: "free"
+  - name: "agentrouter-glm"
+    priority: 25
+    disabled: false
+    models:
+      - name: "agentrouter-glm"
+        alias: "free"
+  - name: "bai-glm"
+    priority: 20
+    disabled: false
+    models:
+      - name: "bai-glm"
+        alias: "free"
+  - name: "cline-free-ds"
+    priority: 27
+    disabled: false
+    models:
+      - name: "free-ds"
+        alias: "free"
+YAML
+invoke_wrapper ready
+assert_status 'workbuddy-free chain still launches' 0
+assert_output_not_contains 'chain without WorkBuddy omits the WorkBuddy line' '[ccp-free] WorkBuddy V4.1：'
+assert_output_contains 'chain without WorkBuddy keeps the Cline GLM service line' '[ccp-free] 服務中：GLM 帳號池（free(max)）'
+assert_file_line 'chain without WorkBuddy still invokes claude' "$FIXTURE/capture.log" 'called=1'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+print -r -- '[]' > "$FIXTURE/request-logs.json"
+jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
+export CCP_FREE_WB_HEALTH=down
+invoke_wrapper ready
+unset CCP_FREE_WB_HEALTH
+assert_status 'workbuddy down with GLM exhausted still launches' 0
+assert_output_contains 'workbuddy down reports WorkBuddy unavailable' '[ccp-free] WorkBuddy V4.1：sidecar down（不可用）'
+assert_output_contains 'workbuddy down plus GLM exhaustion predicts Cline DeepSeek' '[ccp-free] 預計切換：Cline DeepSeek — WorkBuddy V4.1 與 Cline GLM 目前不可用'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+print -r -- '[]' > "$FIXTURE/request-logs.json"
+jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00" | (.accounts[].modelCooldowns["deepseek/deepseek-v4-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
+export CCP_FREE_WB_HEALTH=down
+invoke_wrapper ready
+unset CCP_FREE_WB_HEALTH
+assert_status 'workbuddy and both Cline pools down still launches' 0
+assert_output_contains 'exhausted primary legs predict AgentRouter' '[ccp-free] 預計切換：AgentRouter GLM（上游健康未知）— WorkBuddy V4.1 與 Cline 帳號池目前不可用'
+assert_output_not_contains 'exhausted DeepSeek is not predicted as available' '[ccp-free] 預計切換：Cline DeepSeek'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+cat > "$FIXTURE/config.yaml" <<'YAML'
+openai-compatibility:
+  - name: "workbuddy-v41"
+    priority: 40
+    disabled: false
+    models:
+      - name: "workbuddy/deepseek-v4.1-flash"
+        alias: "free"
+YAML
+invoke_wrapper ready
+assert_status 'single-owner WorkBuddy chain still launches' 0
+assert_output_contains 'single-owner WorkBuddy is recognized as first' '[ccp-free] 預計使用：WorkBuddy V4.1（free(max)）'
+assert_output_not_contains 'healthy single-owner WorkBuddy avoids false empty-pool claim' '[ccp-free] ⚠️  免費池目前沒有可用來源'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+print -r -- '[]' > "$FIXTURE/request-logs.json"
+jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00" | (.accounts[].modelCooldowns["deepseek/deepseek-v4-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
+cat > "$FIXTURE/config.yaml" <<'YAML'
+openai-compatibility:
+  - name: "bai-glm"
+    priority: 25
+    disabled: false
+    models:
+      - name: "bai-glm"
+        alias: "free"
+  - name: "agentrouter-glm"
+    priority: 20
+    disabled: false
+    models:
+      - name: "agentrouter-glm"
+        alias: "free"
+  - name: "cline-free-ds"
+    priority: 10
+    disabled: false
+    models:
+      - name: "free-ds"
+        alias: "free"
+YAML
+invoke_wrapper ready
+assert_status 'chain without Cline GLM still launches' 0
+assert_output_contains 'chain without Cline GLM predicts its first configured owner' '[ccp-free] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
+assert_output_not_contains 'configured external owners prevent a false empty-pool claim' '[ccp-free] ⚠️  免費池目前沒有可用來源'
+teardown_fixture
+
 print -r -- '── free pool status variants'
 setup_fixture
 : > "$FIXTURE/ready"
 print -r -- '[]' > "$FIXTURE/request-logs.json"
 invoke_wrapper ready
 assert_status 'idle free pool still launches' 0
-assert_output_contains 'idle free pool reports configured intent' '[ccp-free] 預計使用：GLM 帳號池（free(max)）— 無近期流量'
+assert_output_contains 'idle free pool keeps WorkBuddy as configured intent' '[ccp-free] 預計使用：WorkBuddy V4.1（free(max)）'
 assert_file_line 'idle free pool invokes claude' "$FIXTURE/capture.log" 'called=1'
 teardown_fixture
 
@@ -483,7 +664,7 @@ jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08
 invoke_wrapper ready
 assert_status 'stale GLM success still launches' 0
 assert_output_not_contains 'stale GLM success does not override exhausted pool' '[ccp-free] 服務中：GLM 帳號池'
-assert_output_contains 'stale GLM success predicts B.AI' '[ccp-free] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
+assert_output_contains 'stale GLM success leaves Cline DeepSeek on standby' '[ccp-free] 備援待命：Cline DeepSeek — 3/3 帳號可用；最近 unknown'
 teardown_fixture
 
 setup_fixture
@@ -526,7 +707,7 @@ cat > "$FIXTURE/request-logs.json" <<'JSON'
 JSON
 invoke_wrapper ready
 assert_status 'unrelated recent model still launches' 0
-assert_output_contains 'unrelated model does not hide normalized GLM success' '[ccp-free] 服務中：GLM 帳號池（free(max)）'
+assert_output_contains 'unrelated model does not hide normalized GLM standby health' '[ccp-free] 備援待命：Cline GLM — 3/3 帳號可用；最近 success 2026-08-29T20:20:00+08:00'
 teardown_fixture
 
 setup_fixture
@@ -542,7 +723,7 @@ cat > "$FIXTURE/request-logs.json" <<'JSON'
 JSON
 invoke_wrapper ready
 assert_status 'DeepSeek-only recent data still launches' 0
-assert_output_contains 'DeepSeek-only data keeps its timestamp fields aligned' '[ccp-free] 服務中：DeepSeek fallback（free(max)）— 最近 success 2026-08-29T20:50:00+08:00'
+assert_output_contains 'DeepSeek-only data keeps its standby timestamp aligned' '[ccp-free] 備援待命：Cline DeepSeek — 3/3 帳號可用；最近 success 2026-08-29T20:50:00+08:00'
 teardown_fixture
 
 setup_fixture
@@ -648,8 +829,8 @@ YAML
 invoke_wrapper ready
 assert_status 'priority-ordered route still launches' 0
 assert_output_contains 'configured chain follows provider priority' '[ccp-free] free(max) route（config）：Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek（上游健康未知）'
-assert_output_contains 'GLM exhaustion reports B.AI as the next unknown stage' '[ccp-free] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
-assert_output_not_contains 'GLM exhaustion does not skip B.AI to AgentRouter' '[ccp-free] 預計切換：AgentRouter GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
+assert_output_contains 'GLM exhaustion reports B.AI as the next configured leg' '[ccp-free] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
+assert_output_not_contains 'GLM exhaustion does not skip the GLM pool' '[ccp-free] 預計切換：AgentRouter GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
 assert_output_not_contains 'unknown B.AI stage does not claim no free source' '[ccp-free] ⚠️  免費池目前沒有可用來源'
 teardown_fixture
 
@@ -659,7 +840,8 @@ print -r -- '[]' > "$FIXTURE/request-logs.json"
 jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
 invoke_wrapper ready
 assert_status 'GLM exhaustion still launches' 0
-assert_output_contains 'GLM exhaustion predicts B.AI fallback' '[ccp-free] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
+assert_output_contains 'GLM exhaustion keeps WorkBuddy primary' '[ccp-free] 預計使用：WorkBuddy V4.1（free(max)）'
+assert_output_contains 'GLM exhaustion leaves Cline DeepSeek on standby' '[ccp-free] 備援待命：Cline DeepSeek — 3/3 帳號可用；最近 unknown'
 assert_file_line 'GLM exhaustion invokes claude' "$FIXTURE/capture.log" 'called=1'
 teardown_fixture
 
@@ -669,7 +851,10 @@ print -r -- '[]' > "$FIXTURE/request-logs.json"
 jq '(.accounts[].modelCooldowns["z-ai/glm-5.3-flash"]) = "2026-08-30T12:00:00+08:00" | (.accounts[].modelCooldowns["deepseek/deepseek-v4-flash"]) = "2026-08-30T12:00:00+08:00"' "$FIXTURE/accounts.json" > "$FIXTURE/accounts.tmp" && mv "$FIXTURE/accounts.tmp" "$FIXTURE/accounts.json"
 invoke_wrapper ready
 assert_status 'empty free pool still launches' 0
-assert_output_contains 'exhausted Cline pools still report B.AI' '[ccp-free] 預計切換：B.AI GLM（上游健康未知）— Cline GLM 帳號池目前不可用'
+assert_output_contains 'exhausted Cline pools keep WorkBuddy primary' '[ccp-free] 預計使用：WorkBuddy V4.1（free(max)）'
+assert_output_contains 'exhausted Cline pools report the GLM warning' '[ccp-free] ⚠️  Cline GLM 備援目前不可用'
+assert_output_contains 'exhausted Cline pools report the DeepSeek warning' '[ccp-free] ⚠️  Cline DeepSeek 備援目前不可用'
+assert_output_not_contains 'healthy WorkBuddy prevents a false empty-pool claim' '[ccp-free] ⚠️  免費池目前沒有可用來源'
 assert_output_contains 'empty free pool prints diagnostic path' '細節排查：ccp-free-whoami / tail -f ~/.cline2api/service.log'
 assert_file_line 'empty free pool invokes claude' "$FIXTURE/capture.log" 'called=1'
 teardown_fixture
@@ -691,9 +876,9 @@ setup_fixture
 invoke_wrapper ready '' ccp-mix-gpt selector
 assert_status 'mixed wrapper selector fallback returns success' 0
 assert_output_contains 'mixed wrapper reports GPT main route' '[ccp-mix-gpt] Main：GPT-6 Astra'
-assert_output_contains 'mixed wrapper reuses free pool summary' '[ccp-mix-gpt] 服務中：GLM 帳號池（free(max)）'
+assert_output_contains 'mixed wrapper reuses WorkBuddy-first free pool summary' '[ccp-mix-gpt] 預計使用：WorkBuddy V4.1（free(max)）'
 assert_output_count 'mixed wrapper reports GPT main once' '[ccp-mix-gpt] Main：GPT-6 Astra' 1
-assert_output_count 'mixed wrapper queries free status once' '[ccp-mix-gpt] 服務中：GLM 帳號池（free(max)）' 1
+assert_output_count 'mixed wrapper queries WorkBuddy status once' '[ccp-mix-gpt] 預計使用：WorkBuddy V4.1（free(max)）' 1
 assert_output_not_contains 'mixed wrapper output omits client key' "$CC_KEY"
 assert_output_not_contains 'mixed wrapper output omits account email' 'alpha@example.test'
 assert_output_not_contains 'mixed wrapper output omits refresh token canary' 'REFRESH-CANARY'
@@ -847,5 +1032,45 @@ probe_weight "$WEIGHT_DIR/absent-cache" curl-fail 1100000
 assert_weight 'failed probe with no cache reports unknown' '未知（探測失敗）'
 
 rm -R "$WEIGHT_DIR"
+
+print -r -- '── standalone ccp-free-whoami'
+setup_fixture
+: > "$FIXTURE/ready"
+WHOAMI_OUTPUT=$(
+  CCP_FREE_KEYS_FILE="$FIXTURE/keys.env" \
+  CCP_FREE_ACCOUNTS_FILE="$FIXTURE/accounts.json" \
+  CCP_FREE_REQUEST_LOG_FILE="$FIXTURE/request-logs.json" \
+  CCP_FREE_CONFIG_FILE="$FIXTURE/config.yaml" \
+  CCP_FREE_LITELLM_CONFIG_FILE="$FIXTURE/litellm.config.yaml" \
+  CCP_FREE_AGENTROUTER_CONFIG_FILE="$FIXTURE/agentrouter.config.yaml" \
+  CCP_FREE_LITELLM_LOG_FILE="$FIXTURE/litellm-calls.jsonl" \
+  CCP_FREE_CURL_BIN="$FIXTURE/bin/curl" \
+  CCP_FREE_CURL_LOG="$FIXTURE/curl.log" \
+  CCP_FREE_BAI_LIVELINESS_URL='http://127.0.0.1:8000/health/liveliness' \
+  CCP_FREE_AGENTROUTER_LIVELINESS_URL='http://127.0.0.1:8002/health/liveliness' \
+  CCP_FREE_WORKBUDDY_HEALTH_URL="$WB_URL/health" \
+  CCP_FREE_WORKBUDDY_ACCOUNTS_URL="$WB_URL/api/accounts" \
+  CCP_FREE_WORKBUDDY_ACCOUNTS_FILE="$FIXTURE/workbuddy-accounts.json" \
+  CCP_FREE_NOW='2026-08-29T21:00:00' \
+  CCP_FREE_SINCE='2026-08-29T20:00:00' \
+  zsh -c "source '$SRC' && ccp-free-whoami ccp-free-whoami" 2>&1
+)
+if [[ "$WHOAMI_OUTPUT" == *'[ccp-free-whoami] WorkBuddy V4.1：sidecar up；1/1 帳號 ready；350/350 credits remaining；model route 未探活'* ]]; then
+  ok 'standalone whoami reads the WorkBuddy status via keys.env'
+else
+  bad 'standalone whoami reads the WorkBuddy status via keys.env'
+  print -ru2 -- "    actual: $WHOAMI_OUTPUT"
+fi
+if [[ "$WHOAMI_OUTPUT" != *"$WB_KEY"* ]]; then
+  ok 'standalone whoami omits the CLI2API key'
+else
+  bad 'standalone whoami omits the CLI2API key'
+fi
+if [[ "$WHOAMI_OUTPUT" == *'[ccp-free-whoami] free(max) route（config）：WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM'* ]]; then
+  ok 'standalone whoami reports the WorkBuddy-first chain'
+else
+  bad 'standalone whoami reports the WorkBuddy-first chain'
+fi
+teardown_fixture
 
 (( FAILURES == 0 ))

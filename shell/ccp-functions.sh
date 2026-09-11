@@ -1376,8 +1376,62 @@ _ccp_free_ds_weight() {
   return 0
 }
 
+_ccp_free_workbuddy_status() {
+  local caller="$1" route_label="$2"
+  local curl_bin="${CCP_FREE_CURL_BIN:-/usr/bin/curl}"
+  local health_url="${CCP_FREE_WORKBUDDY_HEALTH_URL:-http://127.0.0.1:3010/health}"
+  local accounts_url="${CCP_FREE_WORKBUDDY_ACCOUNTS_URL:-http://127.0.0.1:3010/api/accounts}"
+  local keys_file="${CCP_FREE_KEYS_FILE:-$HOME/.cli-proxy-api/keys.env}"
+
+  if ! "$curl_bin" -fsS --max-time 1 "$health_url" >/dev/null 2>&1; then
+    print -P "%F{yellow}[$caller] ${route_label}：sidecar down（不可用）%f" >&2
+    print -r -- 0
+    return 0
+  fi
+
+  local api_key=''
+  if [[ -r "$keys_file" ]]; then
+    api_key=$(awk -F= '$1 == "CLI2API_API_KEY" { sub(/^[^=]*=/, ""); gsub(/["'"'"']/, ""); print; exit }' "$keys_file" 2>/dev/null)
+  fi
+
+  local accounts_json=''
+  if [[ -n "$api_key" ]]; then
+    accounts_json=$("$curl_bin" -fsS --max-time 2 -H "Authorization: Bearer $api_key" "$accounts_url" 2>/dev/null)
+  fi
+
+  local total=0 ready=0 credits_remaining='' credits_total=''
+  if [[ -n "$accounts_json" ]] && command -v jq >/dev/null 2>&1; then
+    IFS=$'\t' read -r total ready credits_remaining credits_total <<< "$(
+      printf '%s' "$accounts_json" | jq -r '
+        [.data[]? | select((.enabled // true) != false)] as $a
+        | (($a | length) | tostring)
+          + "\t"
+          + (($a | map(select((if has("ready") then .ready else (.status == "ready") end) == true)) | length) | tostring)
+          + "\t"
+          + ((($a | map(.quota.remaining // empty) | add) // "") | tostring)
+          + "\t"
+          + ((($a | map(.quota.total // empty) | add) // "") | tostring)
+      ' 2>/dev/null
+    )"
+    [[ -z "$total" ]] && total=0
+    [[ -z "$ready" ]] && ready=0
+  fi
+  [[ -z "$credits_remaining" ]] && credits_remaining='?'
+  [[ -z "$credits_total" ]] && credits_total='?'
+
+  if (( ready > 0 )); then
+    print -r -- "[$caller] ${route_label}：sidecar up；${ready}/${total} 帳號 ready；${credits_remaining}/${credits_total} credits remaining；model route 未探活" >&2
+    print -r -- 1
+  else
+    print -P "%F{yellow}[$caller] ${route_label}：sidecar up；${ready}/${total} 帳號 ready（不可用）%f" >&2
+    print -r -- 0
+  fi
+  return 0
+}
+
 ccp-free-whoami() {
   local caller="${1:-ccp-free}"
+  local keys_file="${CCP_FREE_KEYS_FILE:-$HOME/.cli-proxy-api/keys.env}"
   local accounts_file="${CCP_FREE_ACCOUNTS_FILE:-$HOME/.cline2api/.cline-accounts.json}"
   local request_log_file="${CCP_FREE_REQUEST_LOG_FILE:-$HOME/.cline2api/.cline-request-logs.json}"
   local config_file="${CCP_FREE_CONFIG_FILE:-$HOME/.cli-proxy-api/config.yaml}"
@@ -1389,12 +1443,13 @@ ccp-free-whoami() {
   local agentrouter_liveliness_url="${CCP_FREE_AGENTROUTER_LIVELINESS_URL:-http://127.0.0.1:8002/health/liveliness}"
   local now="${CCP_FREE_NOW:-$(date '+%Y-%m-%dT%H:%M:%S')}"
   local since="${CCP_FREE_SINCE:-$(date -v-1H '+%Y-%m-%dT%H:%M:%S')}"
-  local route_states=$'unknown\tabsent\t\t'
+  local route_states=$'unknown\tabsent\t\t\t'
 
   if [[ -r "$config_file" ]]; then
     route_states=$(awk '
       function route_label(value) {
         if (value == "cline-free-glm") return "Cline GLM"
+        if (value == "workbuddy-v41") return "WorkBuddy V4.1"
         if (value == "bai-glm") return "B.AI GLM"
         if (value == "agentrouter-glm") return "AgentRouter GLM"
         if (value == "cline-free-ds") return "Cline DeepSeek"
@@ -1442,22 +1497,35 @@ ccp-free-whoami() {
         commit()
         free_route = ""
         next_fallback = ""
+        external_fallback = ""
+        seen_glm = 0
         for (i = 1; i <= owner_count; i++) {
           free_route = free_route (free_route == "" ? "" : " → ") owner_labels[i]
-          if (next_fallback == "" && owner_labels[i] != "Cline GLM") next_fallback = owner_labels[i]
+          if (seen_glm && next_fallback == "") next_fallback = owner_labels[i]
+          if (owner_labels[i] == "Cline GLM") seen_glm = 1
+          if (external_fallback == "" && owner_labels[i] != "WorkBuddy V4.1" && owner_labels[i] != "Cline GLM" && owner_labels[i] != "Cline DeepSeek") external_fallback = owner_labels[i]
         }
-        print (free_count > 0 ? "enabled" : "disabled") "\t" freel "\t" free_route "\t" next_fallback
+        if (next_fallback == "") {
+          for (i = 1; i <= owner_count; i++) {
+            if (owner_labels[i] != "Cline GLM") {
+              next_fallback = owner_labels[i]
+              break
+            }
+          }
+        }
+        print (free_count > 0 ? "enabled" : "disabled") "\t" freel "\t" free_route "\t" next_fallback "\t" external_fallback
       }
     ' "$config_file" 2>/dev/null)
   fi
 
-  local free_route_state freellmapi_state free_route_chain next_fallback
-  IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain next_fallback <<< "$route_states"
+  local free_route_state freellmapi_state free_route_chain next_fallback external_fallback
+  IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain next_fallback external_fallback <<< "$route_states"
   if [[ "$free_route_state" != "enabled" ]]; then
     if [[ "$freellmapi_state" == "enabled" ]]; then
       print -P "%F{yellow}[$caller] 預計切換：FreeLLMAPI — 目前 free route 沒有 active alias=free owner%f" >&2
     else
       print -P "%F{red}[$caller] ⚠️  免費池 route 目前停用%f" >&2
+      [[ -n "$next_fallback" ]] && print -P "%F{yellow}[$caller] 預計切換：${next_fallback}%f" >&2
     fi
     [[ "$freellmapi_state" == "disabled" ]] && print -P "[$caller] FreeLLMAPI：已停用，不在目前路由" >&2
     print -P "%F{yellow}          細節排查：ccp-free-whoami / tail -f ~/.cline2api/service.log%f" >&2
@@ -1465,6 +1533,15 @@ ccp-free-whoami() {
   fi
 
   print -P "[$caller] free(max) route（config）：${free_route_chain}（上游健康未知）" >&2
+
+  local workbuddy_first=0 workbuddy_available=0
+  if [[ "$free_route_chain" == *"WorkBuddy V4.1"* ]]; then
+    [[ "$free_route_chain" == "WorkBuddy V4.1" || "$free_route_chain" == "WorkBuddy V4.1 → "* ]] && workbuddy_first=1
+    workbuddy_available=$(_ccp_free_workbuddy_status "$caller" 'WorkBuddy V4.1')
+    if (( workbuddy_first && workbuddy_available )); then
+      print -P "%F{green}[$caller] 預計使用：WorkBuddy V4.1（free(max)）%f" >&2
+    fi
+  fi
 
   local bai_deployments='unknown' agentrouter_deployments='unknown'
   if [[ -r "$litellm_config_file" ]]; then
@@ -1585,7 +1662,29 @@ ccp-free-whoami() {
   fi
 
   local primary_glm=0
-  if [[ "$recent_completed" == "true" && "$recent_model" == "z-ai/glm-5.3-flash" ]] && (( glm_available > 0 )); then
+  if (( workbuddy_first && workbuddy_available )); then
+    if (( glm_available > 0 )); then
+      print -P "[$caller] 備援待命：Cline GLM — ${glm_available}/${account_total} 帳號可用；最近 ${glm_observed}" >&2
+    else
+      print -P "%F{yellow}[$caller] ⚠️  Cline GLM 備援目前不可用%f" >&2
+    fi
+    if (( ds_available > 0 )); then
+      print -P "[$caller] 備援待命：Cline DeepSeek — ${ds_available}/${account_total} 帳號可用；最近 ${ds_observed}" >&2
+    else
+      print -P "%F{yellow}[$caller] ⚠️  Cline DeepSeek 備援目前不可用%f" >&2
+    fi
+  elif (( workbuddy_first )); then
+    if (( glm_available > 0 )); then
+      primary_glm=1
+      print -P "%F{yellow}[$caller] 預計切換：Cline GLM — WorkBuddy V4.1 目前不可用；${glm_available}/${account_total} 帳號可用%f" >&2
+    elif (( ds_available > 0 )); then
+      print -P "%F{yellow}[$caller] 預計切換：Cline DeepSeek — WorkBuddy V4.1 與 Cline GLM 目前不可用%f" >&2
+    elif [[ -n "$external_fallback" ]]; then
+      print -P "%F{yellow}[$caller] 預計切換：${external_fallback}（上游健康未知）— WorkBuddy V4.1 與 Cline 帳號池目前不可用%f" >&2
+    else
+      print -P "%F{red}[$caller] ⚠️  免費池目前沒有可用來源%f" >&2
+    fi
+  elif [[ "$recent_completed" == "true" && "$recent_model" == "z-ai/glm-5.3-flash" ]] && (( glm_available > 0 )); then
     primary_glm=1
     print -P "%F{green}[$caller] 服務中：GLM 帳號池（free(max)）— ${glm_available}/${account_total} 帳號可用；最近 ${glm_observed}%f" >&2
   elif [[ "$recent_completed" == "true" && "$recent_model" == "deepseek/deepseek-v4-flash" ]] && (( ds_available > 0 )); then
@@ -1597,10 +1696,14 @@ ccp-free-whoami() {
     else
       print -P "%F{yellow}[$caller] 預計使用：GLM 帳號池（free(max)）— 無近期流量，${glm_available}/${account_total} 帳號可用%f" >&2
     fi
-  elif [[ -n "$next_fallback" && "$next_fallback" != "Cline DeepSeek" ]]; then
+  elif [[ "$next_fallback" == "Cline DeepSeek" ]] && (( ds_available > 0 )); then
+    print -P "%F{yellow}[$caller] 預計切換：Cline DeepSeek — Cline GLM 帳號池目前不可用%f" >&2
+  elif [[ "$next_fallback" != "Cline DeepSeek" && -n "$next_fallback" ]]; then
     print -P "%F{yellow}[$caller] 預計切換：${next_fallback}（上游健康未知）— Cline GLM 帳號池目前不可用%f" >&2
+  elif [[ -n "$external_fallback" ]]; then
+    print -P "%F{yellow}[$caller] 預計切換：${external_fallback}（上游健康未知）— Cline 帳號池目前不可用%f" >&2
   elif (( ds_available > 0 )); then
-    print -P "%F{yellow}[$caller] 預計切換：DeepSeek — GLM 帳號池目前不可用%f" >&2
+    print -P "%F{yellow}[$caller] 預計切換：Cline DeepSeek — Cline GLM 帳號池目前不可用%f" >&2
   else
     print -P "%F{red}[$caller] ⚠️  免費池目前沒有可用來源%f" >&2
   fi
@@ -1628,7 +1731,7 @@ ccp-free-whoami() {
     print -P "%F{yellow}[$caller] FreeLLMAPI：已設定，健康未知%f" >&2
   fi
 
-  if (( recent_failed || glm_available == 0 || ds_available == 0 )); then
+  if (( (workbuddy_first && ! workbuddy_available) || recent_failed || glm_available == 0 || ds_available == 0 )); then
     print -P "%F{yellow}          細節排查：ccp-free-whoami / tail -f ~/.cline2api/service.log%f" >&2
   fi
   return 0
@@ -1678,8 +1781,8 @@ ccp-free() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
     export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-free(max)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Free chain (Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Cline GLM first; B.AI GLM next; AgentRouter GLM next; Cline DeepSeek last}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Free chain (WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM)}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-WorkBuddy V4.1 first; Cline GLM next; Cline DeepSeek next; AgentRouter GLM next; B.AI GLM last}"
     export CLAUDE_CODE_SUBAGENT_MODEL='free(max)'
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1000000}
@@ -1789,7 +1892,7 @@ Available cc-vendor-bridge functions:
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
-  ccp-free          → CLIProxyAPI free(max) chain: Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek (:8317)
+  ccp-free          → CLIProxyAPI free(max) chain: WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM (:8317)
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
@@ -1797,7 +1900,7 @@ Available cc-vendor-bridge functions:
                       Astra effort medium / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
   ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-6-astra (medium), OPUS/SONNET/HAIKU+subagents→free(max)
-                      (= same free chain: Cline GLM → B.AI GLM → AgentRouter GLM → Cline DeepSeek, :8317)
+                      (= same free chain: WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM, :8317)
                       480K context window (shared free-chain ceiling)
   ccp-mix-sol       → ccp-mix-gpt with the flagship seats rolled back to gpt-5.6-sol
                       (FABLE+main→sol at xhigh, fleet slots stay on free(max))
