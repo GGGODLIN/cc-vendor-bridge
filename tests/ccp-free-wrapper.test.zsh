@@ -293,7 +293,6 @@ exit 0'
   printf "custom_name=%s\n" "${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME-}"
   printf "custom_description=%s\n" "${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION-}"
   printf "subagent_model=%s\n" "${CLAUDE_CODE_SUBAGENT_MODEL-}"
-  printf "async_agent_stall_timeout=%s\n" "${CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS-}"
   printf "max_context_tokens=%s\n" "${CLAUDE_CODE_MAX_CONTEXT_TOKENS-}"
   printf "auto_compact_window=%s\n" "${CLAUDE_CODE_AUTO_COMPACT_WINDOW-}"
   printf "disable_compact=%s\n" "${DISABLE_COMPACT-}"
@@ -353,8 +352,7 @@ invoke_wrapper() {
     export CLAUDE_CODE_SUBAGENT_MODEL='outer-subagent-model'
     unset ANTHROPIC_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION ANTHROPIC_CUSTOM_MODEL_OPTION_NAME \
       ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION CLAUDE_CODE_MAX_CONTEXT_TOKENS \
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS \
-      CLIPROXY_BASE_URL CLIPROXY_KEY_CC
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW CLIPROXY_BASE_URL CLIPROXY_KEY_CC
     if [[ -n "$outer_model" ]]; then
       export ANTHROPIC_MODEL="$outer_model"
     fi
@@ -482,7 +480,6 @@ assert_file_line 'custom free-chain option keeps the pooled alias' "$FIXTURE/cap
 assert_file_line 'custom option names the current free chain' "$FIXTURE/capture.log" 'custom_name=Free chain (WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM)'
 assert_file_line 'custom option describes the configured free chain' "$FIXTURE/capture.log" 'custom_description=WorkBuddy V4.1 first; Cline GLM next; Cline DeepSeek next; AgentRouter GLM next; B.AI GLM last'
 assert_file_line 'subagent model is hard-pinned free(max)' "$FIXTURE/capture.log" "subagent_model=$MODEL"
-assert_file_line 'free pool extends async agent watchdog to 15 minutes' "$FIXTURE/capture.log" 'async_agent_stall_timeout=900000'
 assert_file_line 'context window matches GLM metadata' "$FIXTURE/capture.log" 'max_context_tokens=1048576'
 assert_file_line 'auto compact requests the supported 1M window' "$FIXTURE/capture.log" 'auto_compact_window=1000000'
 assert_file_line 'outer compact disable is removed' "$FIXTURE/capture.log" 'disable_compact='
@@ -892,7 +889,6 @@ assert_file_line 'mixed wrapper passes Astra after model flag' "$FIXTURE/capture
 assert_file_line 'mixed wrapper marks GPT main for startup convergence' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
 assert_file_line 'mixed wrapper keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 assert_file_line 'mixed wrapper keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
-assert_file_line 'mixed wrapper extends async agent watchdog to 15 minutes' "$FIXTURE/capture.log" 'async_agent_stall_timeout=900000'
 teardown_fixture
 
 setup_fixture
@@ -931,7 +927,6 @@ assert_file_line 'mix-sol pins FABLE to sol' "$FIXTURE/capture.log" 'fable_model
 assert_file_line 'mix-sol keeps GPT vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
 assert_file_line 'mix-sol keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 assert_file_line 'mix-sol keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
-assert_file_line 'mix-sol inherits the 15 minute async agent watchdog' "$FIXTURE/capture.log" 'async_agent_stall_timeout=900000'
 teardown_fixture
 
 setup_fixture
