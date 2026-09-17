@@ -300,8 +300,12 @@ ccp-mimo-payg() {
 # function launches it and waits for the adapter to answer.
 # Capability snapshot 2026-09-17: code 題全滿分、tool 鏈與 agentic edit 乾淨、繁中乾淨；
 # 弱點是延遲不穩（同一句短請求實測 0.9–30.1 秒）。`reasoning_effort` 回 400 不支援。
-# CONTEXT WINDOW 尚未實測，所以刻意不釘 DISABLE_COMPACT / CLAUDE_CODE_MAX_CONTEXT_TOKENS，
-# 兩者可由呼叫端覆寫；LIVE 階段驗出實際大小後再釘值。
+# CONTEXT WINDOW 實測 2026-09-17：硬上限 1,048,576 (2^20)。超過**不報錯、靜默截斷尾端**
+# ——送 1.2M 與 1.4M 兩次都回報 prompt_tokens=1,048,570 且尾端指令沒被執行。1,023,284
+# tokens 實測完整讀到尾。CC 不認得這個 model id，預設會假設 200K 並據此 auto-compact，
+# 所以這裡把真實窗口釘上去。
+# reasoning_effort：MiMo 上游回 400 不支援，而 CC 會自動帶。已在 litellm 那層用
+# drop_params + additional_drop_params 丟棄（local-llm-gateway config），不需在此處理。
 ccp-mimo-x() {
   if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
     echo "ccp-mimo-x: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
@@ -347,6 +351,8 @@ ccp-mimo-x() {
     export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-mimo-x-pro}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     _cc_vendor_claude "$@"
   )
 }
