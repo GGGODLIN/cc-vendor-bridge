@@ -293,6 +293,64 @@ ccp-mimo-payg() {
   )
 }
 
+# ===== Xiaomi MiMo X Pro (Desktop SSO axis, via CLIProxyAPI relay) =====
+# Chain: relay :8317 → litellm :8000 → mimo-sso-adapter :8320 → MiMo Desktop engine.
+# The three services are launchd KeepAlive, but the Desktop app is a GUI app launchd
+# cannot supervise — adapter returns 503 whenever it is closed or logged out, so this
+# function launches it and waits for the adapter to answer.
+# Capability snapshot 2026-09-17: code 題全滿分、tool 鏈與 agentic edit 乾淨、繁中乾淨；
+# 弱點是延遲不穩（同一句短請求實測 0.9–30.1 秒）。`reasoning_effort` 回 400 不支援。
+# CONTEXT WINDOW 尚未實測，所以刻意不釘 DISABLE_COMPACT / CLAUDE_CODE_MAX_CONTEXT_TOKENS，
+# 兩者可由呼叫端覆寫；LIVE 階段驗出實際大小後再釘值。
+ccp-mimo-x() {
+  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+    echo "ccp-mimo-x: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
+    return 1
+  fi
+  if ! pgrep -qf "Xiaomi MiMo AI"; then
+    echo "[ccp-mimo-x] MiMo Desktop not running, launching..." >&2
+    open -ga "Xiaomi MiMo AI" 2>/dev/null || {
+      echo "[ccp-mimo-x] could not launch /Applications/Xiaomi MiMo AI.app" >&2
+      return 1
+    }
+  fi
+  local i=0
+  while (( i < 60 )); do
+    /usr/bin/curl -sf -m 3 -o /dev/null \
+      -H "Authorization: Bearer mimo-local" http://127.0.0.1:8320/health 2>/dev/null && break
+    sleep 0.5; ((i++))
+  done
+  if (( i >= 60 )); then
+    echo "[ccp-mimo-x] adapter :8320 not healthy after 30s — is MiMo Desktop logged in?" >&2
+    return 1
+  fi
+  if ! /usr/bin/nc -z 127.0.0.1 8000 2>/dev/null; then
+    echo "[ccp-mimo-x] litellm not listening, kickstarting..." >&2
+    launchctl kickstart "gui/$UID/com.gggodlin.litellm-proxy" 2>/dev/null
+    sleep 10
+  fi
+  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+    echo "[ccp-mimo-x] relay not listening, kickstarting..." >&2
+    launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
+    sleep 5
+  fi
+  (
+    source ~/.cli-proxy-api/keys.env
+    unset ANTHROPIC_API_KEY
+    export CC_VENDOR=mimo-x
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-mimo-x-pro}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-mimo-x-pro}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-mimo-x-pro}
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-mimo-x-pro}
+    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-mimo-x-pro}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    _cc_vendor_claude "$@"
+  )
+}
+
 # ===== BRUCEAI gateway — GPT-5.6 family, prepaid credits =====
 # Official docs: https://www.bruceai.net/docs/claude-code · pricing: /pricing
 # Rebuilt 2026-08-17 against api.bruceai.net. The internal-test Cloud Run hosts
@@ -1882,6 +1940,7 @@ Available cc-vendor-bridge functions:
   ccp-glm           → Zhipu GLM-5.1 / 4.7-Flash (z.ai intl)
   ccp-mimo          → Xiaomi MiMo V2.5-Pro Token Plan (Singapore subscription)
   ccp-mimo-payg     → Xiaomi MiMo V2.5-Pro (intl PAYG)
+  ccp-mimo-x        → Xiaomi MiMo X Pro (Desktop SSO axis via relay; auto-launches the app)
   ccp-bruce         → BRUCEAI gateway api.bruceai.net, prepaid credits, GPT-5.6 slot mapping
                       (OPUS+FABLE→sol / SONNET+HAIKU→luna, --effort high, 272K window)
                       Context pinned at the 272K billing cliff: past it the whole request
