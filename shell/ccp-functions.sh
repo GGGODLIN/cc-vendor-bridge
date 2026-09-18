@@ -1871,8 +1871,16 @@ ccp-free() {
     export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-$chain_name}"
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-$chain_desc}"
     export CLAUDE_CODE_SUBAGENT_MODEL='free(max)'
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
-    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1000000}
+    # 480,000 aligns with ccp-mix-gpt. Was 1,048,576 (GLM metadata) until 2026-09-18:
+    # devin-swe2 joined the free chain and returns HTTP 200 with an empty body at
+    # 1,048,570 prompt tokens (completion_tokens=0, no error), which neither the relay
+    # nor CC can detect as a failure. 480,476 was measured answering correctly on swe2;
+    # deepseek-v4.1-flash still answers at 1,005,037, so this trades that headroom away
+    # deliberately — the user does not trust free-tier 1M quality anyway.
+    # Tokenizers differ across legs (the same filler counts 504,470 on swe2 vs 315,037
+    # on v4.1-flash), so no single value aligns with every leg.
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-480000}
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-480000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     command "$claude_bin" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"

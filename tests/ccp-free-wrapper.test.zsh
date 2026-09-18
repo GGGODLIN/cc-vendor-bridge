@@ -480,8 +480,8 @@ assert_file_line 'custom free-chain option keeps the pooled alias' "$FIXTURE/cap
 assert_file_line 'custom option names the current free chain' "$FIXTURE/capture.log" 'custom_name=Free chain (WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM)'
 assert_file_line 'custom option describes the configured free chain' "$FIXTURE/capture.log" 'custom_description=WorkBuddy V4.1 first; Cline GLM next; Cline DeepSeek next; AgentRouter GLM next; B.AI GLM last'
 assert_file_line 'subagent model is hard-pinned free(max)' "$FIXTURE/capture.log" "subagent_model=$MODEL"
-assert_file_line 'context window matches GLM metadata' "$FIXTURE/capture.log" 'max_context_tokens=1048576'
-assert_file_line 'auto compact requests the supported 1M window' "$FIXTURE/capture.log" 'auto_compact_window=1000000'
+assert_file_line 'context window stays under the swe2 empty-body threshold' "$FIXTURE/capture.log" 'max_context_tokens=480000'
+assert_file_line 'auto compact window matches the context ceiling' "$FIXTURE/capture.log" 'auto_compact_window=480000'
 assert_file_line 'outer compact disable is removed' "$FIXTURE/capture.log" 'disable_compact='
 assert_file_line 'paid fallback env is removed' "$FIXTURE/capture.log" 'anthropic_fallback='
 assert_file_line 'Claude Code fallback env is removed' "$FIXTURE/capture.log" 'claude_code_fallback='
