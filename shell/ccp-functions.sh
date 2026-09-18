@@ -1517,6 +1517,8 @@ ccp-free-whoami() {
         if (value == "bai-glm") return "B.AI GLM"
         if (value == "agentrouter-glm") return "AgentRouter GLM"
         if (value == "cline-free-ds") return "Cline DeepSeek"
+        if (value == "cline-free-v41") return "Cline V4.1"
+        if (value == "cline-free-muse") return "Cline Muse"
         if (value == "mimo-desktop") return "MiMo X Pro"
         if (value == "freellmapi") return "FreeLLMAPI"
         return value
@@ -1585,6 +1587,7 @@ ccp-free-whoami() {
 
   local free_route_state freellmapi_state free_route_chain next_fallback external_fallback
   IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain next_fallback external_fallback <<< "$route_states"
+  typeset -g CCP_FREE_ROUTE_CHAIN="$free_route_chain"
   if [[ "$free_route_state" != "enabled" ]]; then
     if [[ "$freellmapi_state" == "enabled" ]]; then
       print -P "%F{yellow}[$caller] 預計切換：FreeLLMAPI — 目前 free route 沒有 active alias=free owner%f" >&2
@@ -1846,8 +1849,27 @@ ccp-free() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
     export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-free(max)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Free chain (WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-WorkBuddy V4.1 first; Cline GLM next; Cline DeepSeek next; AgentRouter GLM next; B.AI GLM last}"
+    local -a chain_hops=()
+    [[ -n "${CCP_FREE_ROUTE_CHAIN-}" ]] && chain_hops=(${(ps: → :)CCP_FREE_ROUTE_CHAIN})
+    local chain_name chain_desc
+    if (( ${#chain_hops} )); then
+      chain_name="Free chain (${CCP_FREE_ROUTE_CHAIN})"
+      local hop_i
+      for (( hop_i = 1; hop_i <= ${#chain_hops}; hop_i++ )); do
+        if (( hop_i == 1 )); then
+          chain_desc="${chain_hops[hop_i]} first"
+        elif (( hop_i == ${#chain_hops} )); then
+          chain_desc="${chain_desc}; ${chain_hops[hop_i]} last"
+        else
+          chain_desc="${chain_desc}; ${chain_hops[hop_i]} next"
+        fi
+      done
+    else
+      chain_name='Free chain (unresolved)'
+      chain_desc='free chain could not be read from the relay config'
+    fi
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-$chain_name}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-$chain_desc}"
     export CLAUDE_CODE_SUBAGENT_MODEL='free(max)'
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1000000}
