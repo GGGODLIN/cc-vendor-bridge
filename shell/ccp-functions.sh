@@ -1517,6 +1517,7 @@ ccp-free-whoami() {
         if (value == "bai-glm") return "B.AI GLM"
         if (value == "agentrouter-glm") return "AgentRouter GLM"
         if (value == "cline-free-ds") return "Cline DeepSeek"
+        if (value == "mimo-desktop") return "MiMo X Pro"
         if (value == "freellmapi") return "FreeLLMAPI"
         return value
       }
