@@ -189,6 +189,18 @@ openai-compatibility:
     models:
       - name: "bai-glm"
         alias: "free"
+  - name: "mimo-desktop-smart"
+    priority: 90
+    disabled: false
+    models:
+      - name: "mimo-x-pro"
+        alias: "free-smart"
+  - name: "cline-free-glm-smart"
+    priority: 65
+    disabled: false
+    models:
+      - name: "free-glm"
+        alias: "free-smart"
   - name: "freellmapi"
     disabled: true
     models:
@@ -455,6 +467,7 @@ assert_file_line 'WorkBuddy accounts probe sends its bearer credential' "$FIXTUR
 assert_output_contains 'free pool reports disabled FreeLLMAPI' '[ccp-free] FreeLLMAPI：已停用'
 assert_output_contains 'WorkBuddy reports the sidecar and account health' '[ccp-free] WorkBuddy V4.1：sidecar up；1/1 帳號 ready；350/350 credits remaining；model route 未探活'
 assert_output_contains 'WorkBuddy is the first owner so predicts itself' '[ccp-free] 預計使用：WorkBuddy V4.1（free(max)）'
+assert_output_contains 'smart chain reports the capability-ordered route' '[ccp-free] free-smart(max) route（config）：MiMo X Pro → Cline GLM（上游健康未知）'
 assert_output_not_contains 'healthy free pool omits warning marker' '⚠️'
 assert_output_not_contains 'free pool output omits client key' "$CC_KEY"
 assert_output_not_contains 'free pool output omits management key' 'mgmt-test'
@@ -472,7 +485,7 @@ assert_file_line 'vendor marker is process-local free' "$FIXTURE/capture.log" 'c
 assert_file_line 'base URL comes from keys.env' "$FIXTURE/capture.log" "base_url=$CC_URL"
 assert_file_line 'auth token is the CC relay key' "$FIXTURE/capture.log" "auth_token=$CC_KEY"
 assert_file_line 'Anthropic API key is removed' "$FIXTURE/capture.log" 'api_key='
-assert_file_line 'main model is free(max)' "$FIXTURE/capture.log" "model=$MODEL"
+assert_file_line 'main model is free-smart(max)' "$FIXTURE/capture.log" "model=$SMART_MODEL"
 assert_file_line 'FABLE model is hard-pinned free-smart(max)' "$FIXTURE/capture.log" "fable_model=$SMART_MODEL"
 assert_file_line 'OPUS model is hard-pinned free(max)' "$FIXTURE/capture.log" "opus_model=$MODEL"
 assert_file_line 'SONNET model is hard-pinned free(max)' "$FIXTURE/capture.log" "sonnet_model=$MODEL"
@@ -487,7 +500,7 @@ assert_file_line 'outer compact disable is removed' "$FIXTURE/capture.log" 'disa
 assert_file_line 'paid fallback env is removed' "$FIXTURE/capture.log" 'anthropic_fallback='
 assert_file_line 'Claude Code fallback env is removed' "$FIXTURE/capture.log" 'claude_code_fallback='
 assert_file_line 'CLI model flag overrides settings' "$FIXTURE/capture.log" 'arg1=--model'
-assert_file_line 'CLI model flag pins free(max)' "$FIXTURE/capture.log" "arg2=$MODEL"
+assert_file_line 'CLI model flag pins free-smart(max)' "$FIXTURE/capture.log" "arg2=$SMART_MODEL"
 assert_file_line 'WebSearch is disallowed' "$FIXTURE/capture.log" 'arg3=--disallowed-tools'
 assert_file_line 'WebSearch tool name follows' "$FIXTURE/capture.log" 'arg4=WebSearch'
 assert_file_line 'caller arguments are preserved' "$FIXTURE/capture.log" 'arg5=--print'

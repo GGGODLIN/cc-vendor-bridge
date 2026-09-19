@@ -1512,6 +1512,7 @@ ccp-free-whoami() {
   if [[ -r "$config_file" ]]; then
     route_states=$(awk '
       function route_label(value) {
+        sub(/-smart$/, "", value)
         if (value == "cline-free-glm") return "Cline GLM"
         if (value == "workbuddy-v41") return "WorkBuddy V4.1"
         if (value == "bai-glm") return "B.AI GLM"
@@ -1520,6 +1521,7 @@ ccp-free-whoami() {
         if (value == "cline-free-v41") return "Cline V4.1"
         if (value == "cline-free-muse") return "Cline Muse"
         if (value == "mimo-desktop") return "MiMo X Pro"
+        if (value == "atkins-devin-swe2") return "Devin SWE-2"
         if (value == "freellmapi") return "FreeLLMAPI"
         return value
       }
@@ -1534,14 +1536,29 @@ ccp-free-whoami() {
         owner_labels[i + 1] = owner_label
         owner_count++
       }
+      function add_smart_owner(owner_priority, owner_label, i) {
+        i = smart_count
+        while (i > 0 && smart_priorities[i] < owner_priority) {
+          smart_priorities[i + 1] = smart_priorities[i]
+          smart_labels[i + 1] = smart_labels[i]
+          i--
+        }
+        smart_priorities[i + 1] = owner_priority
+        smart_labels[i + 1] = owner_label
+        smart_count++
+      }
       function commit() {
         if (name == "freellmapi") freel = disabled ? "disabled" : (has_free ? "enabled" : "missing-free")
         if (!disabled && has_free) {
           free_count++
           add_owner(priority, route_label(name))
         }
+        if (!disabled && has_smart) {
+          smart_count_seen++
+          add_smart_owner(priority, route_label(name))
+        }
       }
-      BEGIN { name = ""; disabled = 0; has_free = 0; priority = 0; free_count = 0; free_route = ""; owner_count = 0; freel = "absent" }
+      BEGIN { name = ""; disabled = 0; has_free = 0; has_smart = 0; priority = 0; free_count = 0; free_route = ""; owner_count = 0; freel = "absent"; smart_count = 0; smart_count_seen = 0; smart_route = "" }
       /^  - name:/ {
         commit()
         line = $0
@@ -1550,6 +1567,7 @@ ccp-free-whoami() {
         name = line
         disabled = 0
         has_free = 0
+        has_smart = 0
         priority = 0
         next
       }
@@ -1560,6 +1578,7 @@ ccp-free-whoami() {
       }
       name != "" && /^[[:space:]]+disabled:[[:space:]]+true/ { disabled = 1 }
       name != "" && /^[[:space:]]+alias:[[:space:]]*"?free"?[[:space:]]*$/ { has_free = 1 }
+      name != "" && /^[[:space:]]+alias:[[:space:]]*"?free-smart"?[[:space:]]*$/ { has_smart = 1 }
       END {
         commit()
         free_route = ""
@@ -1580,14 +1599,18 @@ ccp-free-whoami() {
             }
           }
         }
-        print (free_count > 0 ? "enabled" : "disabled") "\t" freel "\t" free_route "\t" next_fallback "\t" external_fallback
+        for (i = 1; i <= smart_count; i++) {
+          smart_route = smart_route (smart_route == "" ? "" : " → ") smart_labels[i]
+        }
+        print (free_count > 0 ? "enabled" : "disabled") "\t" freel "\t" free_route "\t" next_fallback "\t" external_fallback "\t" smart_route
       }
     ' "$config_file" 2>/dev/null)
   fi
 
-  local free_route_state freellmapi_state free_route_chain next_fallback external_fallback
-  IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain next_fallback external_fallback <<< "$route_states"
+  local free_route_state freellmapi_state free_route_chain next_fallback external_fallback smart_route_chain
+  IFS=$'\t' read -r free_route_state freellmapi_state free_route_chain next_fallback external_fallback smart_route_chain <<< "$route_states"
   typeset -g CCP_FREE_ROUTE_CHAIN="$free_route_chain"
+  typeset -g CCP_FREE_SMART_ROUTE_CHAIN="$smart_route_chain"
   if [[ "$free_route_state" != "enabled" ]]; then
     if [[ "$freellmapi_state" == "enabled" ]]; then
       print -P "%F{yellow}[$caller] 預計切換：FreeLLMAPI — 目前 free route 沒有 active alias=free owner%f" >&2
@@ -1601,6 +1624,9 @@ ccp-free-whoami() {
   fi
 
   print -P "[$caller] free(max) route（config）：${free_route_chain}（上游健康未知）" >&2
+  if [[ -n "$smart_route_chain" ]]; then
+    print -P "[$caller] free-smart(max) route（config）：${smart_route_chain}（上游健康未知）" >&2
+  fi
 
   local workbuddy_first=0 workbuddy_available=0
   if [[ "$free_route_chain" == *"WorkBuddy V4.1"* ]]; then
@@ -1843,7 +1869,9 @@ ccp-free() {
     export CC_VENDOR=free
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-free(max)}"
+    # Main slot defaults to the capability-ordered twin chain (first leg MiMo X Pro);
+    # /model free(max) switches back to the stability-ordered chain in-session.
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-free-smart(max)}"
     # FABLE slot is the capability-ordered twin of the free chain: same nine legs,
     # reordered mimo → swe2 → (rest keep their stability order). Relay alias
     # free-smart, config entries `*-smart`. Switch with /model inside the session.
