@@ -1844,7 +1844,10 @@ ccp-free() {
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-free(max)}"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL='free(max)'
+    # FABLE slot is the capability-ordered twin of the free chain: same nine legs,
+    # reordered mimo → swe2 → (rest keep their stability order). Relay alias
+    # free-smart, config entries `*-smart`. Switch with /model inside the session.
+    export ANTHROPIC_DEFAULT_FABLE_MODEL='free-smart(max)'
     export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'

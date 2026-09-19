@@ -7,6 +7,7 @@ set -u
 ROOT="${0:A:h:h}"
 SRC="$ROOT/shell/ccp-functions.sh"
 MODEL='free(max)'
+SMART_MODEL='free-smart(max)'
 CC_KEY='test-cc-key'
 WB_KEY='sk-cli2api-canary-key'
 CC_URL='http://127.0.0.1:8317'
@@ -472,7 +473,7 @@ assert_file_line 'base URL comes from keys.env' "$FIXTURE/capture.log" "base_url
 assert_file_line 'auth token is the CC relay key' "$FIXTURE/capture.log" "auth_token=$CC_KEY"
 assert_file_line 'Anthropic API key is removed' "$FIXTURE/capture.log" 'api_key='
 assert_file_line 'main model is free(max)' "$FIXTURE/capture.log" "model=$MODEL"
-assert_file_line 'FABLE model is hard-pinned free(max)' "$FIXTURE/capture.log" "fable_model=$MODEL"
+assert_file_line 'FABLE model is hard-pinned free-smart(max)' "$FIXTURE/capture.log" "fable_model=$SMART_MODEL"
 assert_file_line 'OPUS model is hard-pinned free(max)' "$FIXTURE/capture.log" "opus_model=$MODEL"
 assert_file_line 'SONNET model is hard-pinned free(max)' "$FIXTURE/capture.log" "sonnet_model=$MODEL"
 assert_file_line 'HAIKU model is hard-pinned free(max)' "$FIXTURE/capture.log" "haiku_model=$MODEL"
@@ -949,7 +950,7 @@ invoke_wrapper ready ds-free
 assert_status 'outer override returns success' 0
 assert_file_line 'outer model wins the main slot' "$FIXTURE/capture.log" 'model=ds-free'
 assert_file_line 'outer model wins the CLI flag' "$FIXTURE/capture.log" 'arg2=ds-free'
-assert_file_line 'vendor defaults still pin free(max)' "$FIXTURE/capture.log" "fable_model=$MODEL"
+assert_file_line 'vendor defaults still pin free-smart(max)' "$FIXTURE/capture.log" "fable_model=$SMART_MODEL"
 teardown_fixture
 
 print -r -- '── DeepSeek weight probe (8h cache)'
