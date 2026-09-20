@@ -391,8 +391,11 @@ ccp-mimo-x() {
 # total_cash_balance=0）→ 依官方限流表落 V0 階：10 RPM／5 並發／5M TPM。綁脖子的是 RPM——
 # 探針間距 <6 秒會整批 429（SMOKE 第一輪實測 8/12 N/A，BENCH_DELAY=8 後全落點）。
 # 贈金會過期；個人充值官方只收微信支付。
-# CONTEXT WINDOW：官方 metadata max_input=1,024,000（step-5-preview）/262,144（flash）；
-# 上限未逐字實測，保守釘 250K（高於 CC 200K fallback 假設、低於宣稱值），實測後更新。
+# CONTEXT WINDOW：實測 2026-09-20 單發 220,021 prompt_tokens 回 HTTP 200（官方 metadata
+# max_input=1,024,000 未逐字驗證）；釘 220000＝已驗證下界。flash 另有 metadata 262,144。
+# ⚠ 外層污染警示：本函式沿用 ${VAR:-default} 慣例，.zshrc 已 export 的 ANTHROPIC_MODEL 等
+# 會蓋掉預設。要保證打到 stepfun，呼叫點前綴釘死：ANTHROPIC_MODEL=step-5-preview
+# ANTHROPIC_DEFAULT_OPUS_MODEL=... CLAUDE_CODE_SUBAGENT_MODEL=step-3.5-flash ccp-stepfun ...
 # reasoning 模型：max_tokens 給小了思考會燒光正文、content 欄空（SMOKE T0.3 兩顆皆 FAIL）；
 # 呼叫端要給 ≥8000 並檢查 content 與 reasoning_content 兩個欄位。
 ccp-stepfun() {
@@ -424,7 +427,7 @@ ccp-stepfun() {
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-250000}
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-220000}
     _cc_vendor_claude "$@"
   )
 }
