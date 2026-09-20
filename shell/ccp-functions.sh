@@ -113,6 +113,32 @@ ccp-deepseek-pro() {
     ccp-deepseek "$@"
 }
 
+# ===== Thinking Machines Inkling (OpenRouter :free, harness-gated) =====
+# 2026-09-20 probes: OpenAI-format /chat/completions -> 403 "only available on
+# agentic harnesses"; Anthropic-format /api/v1/messages + Authorization Bearer
+# passes. Deferred tools -> 400 upstream, so ENABLE_TOOL_SEARCH=off is pinned.
+# Key: OPENROUTER_API_KEY env, fallback Keychain service `openrouter-api-key`.
+ccp-inkling() {
+  local or_key="${OPENROUTER_API_KEY:-$(security find-generic-password -s openrouter-api-key -w 2>/dev/null)}"
+  if [[ -z "$or_key" ]]; then
+    echo "ccp-inkling: OPENROUTER_API_KEY not set and Keychain openrouter-api-key missing" >&2
+    return 1
+  fi
+  (
+    export CC_VENDOR=inkling
+    export ANTHROPIC_BASE_URL=https://openrouter.ai/api
+    export ANTHROPIC_AUTH_TOKEN="$or_key"
+    export ANTHROPIC_MODEL=thinkingmachines/inkling:free
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=thinkingmachines/inkling:free
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=thinkingmachines/inkling:free
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=thinkingmachines/inkling-small:free
+    export CLAUDE_CODE_SUBAGENT_MODEL=thinkingmachines/inkling-small:free
+    export ENABLE_TOOL_SEARCH=off
+    export DISABLE_COMPACT=1
+    _cc_vendor_claude "$@"
+  )
+}
+
 # DISABLED: MOONSHOT_API_KEY not configured
 # ===== Moonshot Kimi K2.5 (international PAYG) =====
 # Source: https://platform.kimi.ai/docs/guide/agent-support
