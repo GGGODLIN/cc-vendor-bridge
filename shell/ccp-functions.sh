@@ -383,6 +383,52 @@ ccp-mimo-x() {
   )
 }
 
+# ===== StepFun step-5-preview / step-3.5-flash (PAYG 贈金 key, via CLIProxyAPI relay) =====
+# Chain: relay :8317 → litellm :8000 → https://api.stepfun.com/v1（官方明文相容 OpenAI 規範，
+# step-5-preview 另支援 Anthropic messages 協議）。WIRE 2026-09-20：三層 probe 全通、
+# 設定檔 commit 見 local-llm-gateway ecb48af。
+# 帳戶現況 2026-09-20：prepaid 贈金帳戶（/v1/accounts 實測 balance=14.94 全是 total_voucher_balance、
+# total_cash_balance=0）→ 依官方限流表落 V0 階：10 RPM／5 並發／5M TPM。綁脖子的是 RPM——
+# 探針間距 <6 秒會整批 429（SMOKE 第一輪實測 8/12 N/A，BENCH_DELAY=8 後全落點）。
+# 贈金會過期；個人充值官方只收微信支付。
+# CONTEXT WINDOW：官方 metadata max_input=1,024,000（step-5-preview）/262,144（flash）；
+# 上限未逐字實測，保守釘 250K（高於 CC 200K fallback 假設、低於宣稱值），實測後更新。
+# reasoning 模型：max_tokens 給小了思考會燒光正文、content 欄空（SMOKE T0.3 兩顆皆 FAIL）；
+# 呼叫端要給 ≥8000 並檢查 content 與 reasoning_content 兩個欄位。
+ccp-stepfun() {
+  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+    echo "ccp-stepfun: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
+    return 1
+  fi
+  if ! /usr/bin/nc -z 127.0.0.1 8000 2>/dev/null; then
+    echo "[ccp-stepfun] litellm not listening, kickstarting..." >&2
+    launchctl kickstart "gui/$UID/com.gggodlin.litellm-proxy" 2>/dev/null
+    sleep 10
+  fi
+  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+    echo "[ccp-stepfun] relay not listening, kickstarting..." >&2
+    launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
+    sleep 5
+  fi
+  (
+    source ~/.cli-proxy-api/keys.env
+    unset ANTHROPIC_API_KEY
+    export CC_VENDOR=stepfun
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-step-5-preview}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-step-5-preview}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-step-5-preview}
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-step-3.5-flash}
+    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-step-3.5-flash}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-250000}
+    _cc_vendor_claude "$@"
+  )
+}
+
 # ===== BRUCEAI gateway — GPT-5.6 family, prepaid credits =====
 # Official docs: https://www.bruceai.net/docs/claude-code · pricing: /pricing
 # Rebuilt 2026-08-17 against api.bruceai.net. The internal-test Cloud Run hosts
