@@ -432,6 +432,105 @@ ccp-stepfun() {
   )
 }
 
+# ===== StepFun 餘額與限流快照（唯讀，仿 ccp-bruce-status 形狀） =====
+# ccp-stepfun-status — 三軸訊號判「疑似額度耗盡」：
+#   1) GET /v1/accounts 餘額（key 讀 litellm plist STEPFUN_KEY，不另存明文）
+#   2) litellm callback log 今日 step-* 狀態碼：402=額度耗盡實錘、429=限流（非耗盡）
+#   3) relay config 兩條鏈腿（stepfun-free p34 / stepfun-free-smart p89）還在不在
+# 餘額地板預設 ¥2（2026-09-20 拍板），可用 STEPFUN_BALANCE_FLOOR 覆蓋。
+# litellm 不看得到 vendor 餘額——燒穿是事後從 402 得知，本 CLI 是主動對帳入口。
+ccp-stepfun-status() {
+  local plist="${STEPFUN_PLIST:-$HOME/Library/LaunchAgents/com.gggodlin.litellm-proxy.plist}"
+  local floor="${STEPFUN_BALANCE_FLOOR:-2}"
+  local log_file="${STEPFUN_LITELLM_LOG:-$HOME/.local/state/litellm/calls-$(date +%F).jsonl}"
+  local relay_config="${STEPFUN_RELAY_CONFIG:-$HOME/.cli-proxy-api/config.yaml}"
+  local key accounts
+  key=$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:STEPFUN_KEY' "$plist" 2>/dev/null)
+  if [[ -z "$key" ]]; then
+    echo "ccp-stepfun-status: STEPFUN_KEY not found in $plist" >&2
+    return 1
+  fi
+  if ! accounts=$(/usr/bin/curl -fsS -m 10 -H "Authorization: Bearer $key" https://api.stepfun.com/v1/accounts); then
+    echo "ccp-stepfun-status: /v1/accounts probe failed（網路或 key 失效——此訊號不代表額度耗盡）" >&2
+    accounts=""
+  fi
+  python3 - "$accounts" "$floor" "$log_file" "$relay_config" <<'PY'
+import json, sys, re, os
+accounts_raw, floor_s, log_file, relay_config = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+floor = float(floor_s)
+actions = []
+print("== StepFun 狀態 ==")
+if accounts_raw:
+    try:
+        a = json.loads(accounts_raw)
+        bal, voucher, cash = float(a.get("balance", 0)), float(a.get("total_voucher_balance", 0)), float(a.get("total_cash_balance", 0))
+        print(f"餘額: ¥{bal:.2f}（贈金 ¥{voucher:.2f} + 充值 ¥{cash:.2f}，type={a.get('type','?')}）")
+        if bal <= 0 and voucher <= 0:
+            print("⚠ 疑似額度耗盡：餘額與贈金皆為 0")
+            actions.append("充值或移除鏈腿前，stepfun 腿會持續吃 failover 延遲")
+        elif bal < floor:
+            print(f"⚠ 低於地板 ¥{floor:g}")
+            actions.append(f"拔 stepfun 兩條 chain alias 只留 ccp-stepfun 手動入口（trial ccp-stepfun review 處理）")
+    except Exception as e:
+        print(f"餘額解析失敗: {e}")
+else:
+    print("餘額: 查詢失敗（見 stderr）")
+counts = {"success": 0, "failure": 0, "http_402": 0, "http_429": 0, "other_fail": 0}
+if os.path.exists(log_file):
+    for line in open(log_file, encoding="utf-8", errors="replace"):
+        if "step-" not in line:
+            continue
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        if not str(d.get("model", "")).startswith("step-"):
+            continue
+        st = d.get("status", "")
+        if st == "success":
+            counts["success"] += 1
+        else:
+            counts["failure"] += 1
+            blob = line.lower()
+            if "402" in blob or "insufficient" in blob:
+                counts["http_402"] += 1
+            elif "429" in blob or "rate" in blob:
+                counts["http_429"] += 1
+            else:
+                counts["other_fail"] += 1
+    print(f"今日 litellm log（step-*）: success {counts['success']} / failure {counts['failure']}"
+          f"（402 額度類 {counts['http_402']}、429 限流類 {counts['http_429']}、其他 {counts['other_fail']}）")
+    if counts["http_402"] > 0:
+        print("⚠ 額度耗盡實錘：log 出現 402/insufficient——先查餘額，充值後 kickstart relay 解冷卻")
+        actions.append("402 在案：腿已死，鏈會自動繞過；復活需充值＋restart")
+    elif counts["http_429"] > 0 and counts["http_402"] == 0:
+        print("ℹ 有限流（429）但無 402——V0 10 RPM 特徵，非額度問題；litellm rpm:8 應已把大部分擋在本機")
+else:
+    print(f"今日 litellm log: 無檔案（{log_file}）")
+legs = {}
+try:
+    import yaml
+    cfg = yaml.safe_load(open(relay_config))
+    for p in cfg.get("openai-compatibility", []):
+        for m in p.get("models", []):
+            if m.get("alias") in ("free", "free-smart") and str(p.get("name", "")).startswith("stepfun"):
+                legs[m["alias"]] = (p.get("name"), p.get("priority"))
+except Exception as e:
+    print(f"relay config 解析失敗: {e}")
+if legs:
+    print("鏈腿登記: " + "、".join(f"{alias}←{name}(p{pr})" for alias, (name, pr) in sorted(legs.items())))
+else:
+    print("⚠ 鏈腿登記消失：relay config 找不到 stepfun 的 free/free-smart entry")
+    actions.append("確認 relay config 是否被其他 session 改動")
+if actions:
+    print("-- 建議動作 --")
+    for act in actions:
+        print(f"· {act}")
+else:
+    print("結論: 正常——餘額在地板上、無 402、鏈腿在位")
+PY
+}
+
 # ===== BRUCEAI gateway — GPT-5.6 family, prepaid credits =====
 # Official docs: https://www.bruceai.net/docs/claude-code · pricing: /pricing
 # Rebuilt 2026-08-17 against api.bruceai.net. The internal-test Cloud Run hosts
