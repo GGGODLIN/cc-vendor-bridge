@@ -350,6 +350,7 @@ invoke_wrapper() {
     export CCP_FREE_LITELLM_LOG_FILE="$FIXTURE/litellm-calls.jsonl"
     export CCP_FREE_CURL_BIN="$FIXTURE/bin/curl"
     export CCP_FREE_CURL_LOG="$FIXTURE/curl.log"
+    export CCP_FREE_STEPFUN_PROBE=off
     export CCP_FREE_BAI_LIVELINESS_URL='http://127.0.0.1:8000/health/liveliness'
     export CCP_FREE_AGENTROUTER_LIVELINESS_URL='http://127.0.0.1:8002/health/liveliness'
     export CCP_FREE_WORKBUDDY_HEALTH_URL="$WB_URL/health"
@@ -1055,6 +1056,7 @@ WHOAMI_OUTPUT=$(
   CCP_FREE_LITELLM_LOG_FILE="$FIXTURE/litellm-calls.jsonl" \
   CCP_FREE_CURL_BIN="$FIXTURE/bin/curl" \
   CCP_FREE_CURL_LOG="$FIXTURE/curl.log" \
+  CCP_FREE_STEPFUN_PROBE=off \
   CCP_FREE_BAI_LIVELINESS_URL='http://127.0.0.1:8000/health/liveliness' \
   CCP_FREE_AGENTROUTER_LIVELINESS_URL='http://127.0.0.1:8002/health/liveliness' \
   CCP_FREE_WORKBUDDY_HEALTH_URL="$WB_URL/health" \
