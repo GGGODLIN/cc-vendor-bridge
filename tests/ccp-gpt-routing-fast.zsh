@@ -99,20 +99,25 @@ assert_contains \
   "${functions[ccp-gpt]}" \
   '_cc_vendor_claude --effort "$main_effort"'
 
+assert_eq \
+  "GPT tier table points at the current versions" \
+  "gpt-6-astra|gpt-6-sol|gpt-6-luna" \
+  "$GPT_ASTRA|$GPT_SOL|$GPT_LUNA"
+
 assert_contains \
   "ccp-gpt maps Opus to Luna at max effort" \
   "${functions[ccp-gpt]}" \
-  'ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-luna(max)}"'
+  'ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-${GPT_LUNA}(max)}"'
 
 assert_contains \
   "ccp-gpt keeps Sonnet on Luna at max effort" \
   "${functions[ccp-gpt]}" \
-  'ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-luna(max)}"'
+  'ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-${GPT_LUNA}(max)}"'
 
 assert_contains \
   "ccp-gpt keeps Haiku on Luna at max effort" \
   "${functions[ccp-gpt]}" \
-  'ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna(max)}"'
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${GPT_LUNA}(max)}"'
 
 assert_contains \
   "ccp-gpt exposes the Fast main-model option" \
@@ -211,8 +216,8 @@ if (( ${+functions[ccp-sol]} )); then
 
   assert_eq \
     "ccp-sol rolls main routing back to Sol and keeps Luna fleet" \
-    "gpt-5.6-sol|gpt-5.6-sol|gpt-5.6-luna(max)|gpt-5.6-luna(max)|gpt-5.6-luna(max)|gpt-5.6-luna(max)|gpt-5.6-sol-fast|GPT-5.6 Sol Fast" \
-    "$(ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_SONNET_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_HAIKU_MODEL='gpt-5.6-luna(max)' CLAUDE_CODE_SUBAGENT_MODEL='gpt-5.6-luna(max)' ccp-sol)"
+    "gpt-6-sol|gpt-6-sol|gpt-6-luna(max)|gpt-6-luna(max)|gpt-6-luna(max)|gpt-6-luna(max)|gpt-6-sol-fast|GPT-6 Sol Fast" \
+    "$(ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-6-luna(max)' ANTHROPIC_DEFAULT_SONNET_MODEL='gpt-6-luna(max)' ANTHROPIC_DEFAULT_HAIKU_MODEL='gpt-6-luna(max)' CLAUDE_CODE_SUBAGENT_MODEL='gpt-6-luna(max)' ccp-sol)"
 else
   print -ru2 -- "not ok - ccp-sol exists"
   (( failures++ ))

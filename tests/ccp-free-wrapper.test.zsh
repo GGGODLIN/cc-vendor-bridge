@@ -921,7 +921,7 @@ setup_fixture
 invoke_wrapper ready ds-free ccp-mix-gpt
 assert_status 'mixed main override returns success' 0
 assert_output_contains 'mixed main summary follows override' '[ccp-mix-gpt] Main：ds-free'
-assert_output_not_contains 'mixed main summary does not claim default Sol' '[ccp-mix-gpt] Main：GPT-5.6 Sol'
+assert_output_not_contains 'mixed main summary does not claim default Sol' '[ccp-mix-gpt] Main：GPT-6 Sol'
 assert_file_line 'mixed main override reaches claude' "$FIXTURE/capture.log" 'model=ds-free'
 assert_file_line 'mixed non-GPT override keeps the generic vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix'
 assert_file_line 'mixed main override preserves free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
@@ -932,13 +932,13 @@ setup_fixture
 : > "$FIXTURE/ready"
 invoke_wrapper ready '' ccp-mix-sol selector
 assert_status 'mix-sol wrapper returns success' 0
-assert_output_contains 'mix-sol wrapper reports Sol main route' '[ccp-mix-gpt] Main：GPT-5.6 Sol'
-assert_file_line 'mix-sol pins main to sol' "$FIXTURE/capture.log" 'model=gpt-5.6-sol'
+assert_output_contains 'mix-sol wrapper reports Sol main route' '[ccp-mix-gpt] Main：GPT-6 Sol'
+assert_file_line 'mix-sol pins main to sol' "$FIXTURE/capture.log" 'model=gpt-6-sol'
 assert_file_line 'mix-sol pins Sol effort flag' "$FIXTURE/capture.log" 'arg1=--effort'
 assert_file_line 'mix-sol pins Sol to xhigh' "$FIXTURE/capture.log" 'arg2=xhigh'
 assert_file_line 'mix-sol keeps model flag after effort' "$FIXTURE/capture.log" 'arg3=--model'
-assert_file_line 'mix-sol passes Sol after model flag' "$FIXTURE/capture.log" 'arg4=gpt-5.6-sol'
-assert_file_line 'mix-sol pins FABLE to sol' "$FIXTURE/capture.log" 'fable_model=gpt-5.6-sol'
+assert_file_line 'mix-sol passes Sol after model flag' "$FIXTURE/capture.log" 'arg4=gpt-6-sol'
+assert_file_line 'mix-sol pins FABLE to sol' "$FIXTURE/capture.log" 'fable_model=gpt-6-sol'
 assert_file_line 'mix-sol keeps GPT vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
 assert_file_line 'mix-sol keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 assert_file_line 'mix-sol keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
@@ -948,7 +948,7 @@ setup_fixture
 : > "$FIXTURE/ready"
 invoke_wrapper ready '' ccp-mix-sol
 assert_status 'mix-sol direct mode returns success' 0
-assert_file_line 'mix-sol overrides outer FABLE preset' "$FIXTURE/capture.log" 'fable_model=gpt-5.6-sol'
+assert_file_line 'mix-sol overrides outer FABLE preset' "$FIXTURE/capture.log" 'fable_model=gpt-6-sol'
 teardown_fixture
 
 setup_fixture

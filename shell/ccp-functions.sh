@@ -41,12 +41,22 @@ _cc_vendor_claude() {
   command "$launcher" "$@"
 }
 
+# GPT tier → current version. Launchers reference tiers only; bump versions here.
+GPT_ASTRA=gpt-6-astra
+GPT_SOL=gpt-6-sol
+GPT_LUNA=gpt-6-luna
+
 _ccp_effort_for_model() {
   case "$1" in
-    gpt-6-astra*) print -r -- medium ;;
-    gpt-5.6-sol*) print -r -- xhigh ;;
+    ${GPT_ASTRA}*) print -r -- medium ;;
+    ${GPT_SOL}*|gpt-5.6-sol*) print -r -- xhigh ;;
     *) print -r -- "" ;;
   esac
+}
+
+_ccp_gpt_label() {
+  local rest=${1#gpt-}
+  print -r -- "GPT-${rest%%-*} ${(C)${rest#*-}}"
 }
 
 # ===== DeepSeek V4-Pro =====
@@ -479,11 +489,11 @@ ccp-bruce() {
     # NOTE the effort suffix ccp-gpt uses — `gpt-5.6-luna(max)` — is CLIProxyAPI syntax.
     # Bruce rejects it: 400 `Model "requested model(max)" is not supported`. Effort
     # travels in output_config instead, via the --effort flag below.
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-5.6-sol}
-    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-5.6-sol}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-sol}
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-luna}
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna}
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-$GPT_SOL}
+    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_SOL}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_SOL}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$GPT_LUNA}
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$GPT_LUNA}
     # Deliberately NOT setting CLAUDE_CODE_SUBAGENT_MODEL: leaving it unset lets the
     # slot mapping do the routing, so ~/.claude/agents/routed-*.md land where the policy
     # says (routed-impl/judge/secure = opus → sol, routed-mech = sonnet → luna).
@@ -937,11 +947,11 @@ ccp-relay() {
 # Recipe from OpenAI Codex lead Tibo Sottiaux (x.com/thsottiaux/status/2076119366647894371,
 # 2026-07-12) plus community fixes from the same thread. Tier mapping per OpenAI's
 # official positioning (Astra=flagship, Luna=fast/cheap):
-#   FABLE→gpt-6-astra  OPUS/SONNET/HAIKU→gpt-5.6-luna(max)
+#   FABLE→$GPT_ASTRA  OPUS/SONNET/HAIKU→${GPT_LUNA}(max)
 # Terra dropped from the mapping 2026-08-17 (only the flagship and Luna justify their price).
 # Flagship seat moved 5.6-Sol→6-Astra on 2026-09-05; the cheap subagent fleet stays on
-# 5.6-Luna deliberately — Astra bills 2.5x Sol, so promoting the fleet would multiply the
-# largest consumer. Note this makes the mapping cross-generation, not one model family.
+# Luna deliberately — Astra bills 2.5x Sol, so promoting the fleet would multiply the
+# largest consumer. Fleet moved 5.6-Luna→6-Luna on 2026-09-23; versions live in GPT_* at the top.
 # Context pinned to 1M since 2026-08-17, when OpenAI opened the 1.05M window to
 # ChatGPT accounts; measured backend cap is 922,000 (see the probe notes at the
 # CLAUDE_CODE_MAX_CONTEXT_TOKENS export below). Both overridable.
@@ -1157,9 +1167,9 @@ ccp-gpt() {
     export CC_VENDOR=gpt
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-6-astra}
-    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-6-astra}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.6-luna(max)}"
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-$GPT_ASTRA}
+    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_ASTRA}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-${GPT_LUNA}(max)}"
     # OPUS/SONNET/HAIKU land on Luna at pinned max effort. Terra is retired
     # from the mapping: in practice only Sol and Luna earn their price, and Terra sat in
     # the middle being neither. The `(model)(effort)` suffix is parsed by the relay and
@@ -1168,9 +1178,9 @@ ccp-gpt() {
     # `reasoning {"effort":"max"}` upstream (2/2 runs). That is why per-agent effort in
     # ~/.claude/agents/routed-*.md stays untouched: the suffix wins locally without
     # touching the cross-vendor routing policy.
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.6-luna(max)}"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gpt-5.6-luna(max)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION:-gpt-6-astra-fast}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-${GPT_LUNA}(max)}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${GPT_LUNA}(max)}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION:-${GPT_ASTRA}-fast}
     export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-GPT-6\ Astra\ Fast}
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Priority\ tier\ for\ the\ main\ agent}
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
@@ -1266,7 +1276,7 @@ ccp-gpt() {
 
 ccp-gpt-fast() {
   (
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-6-astra}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_ASTRA}"
     if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
       export ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS}"$'\n'"X-CCP-Fast: 1"
     else
@@ -1285,28 +1295,27 @@ ccp-gpt-smart() {
     else
       unset ANTHROPIC_CUSTOM_HEADERS
     fi
-    ANTHROPIC_MODEL=gpt-6-astra \
-    ANTHROPIC_DEFAULT_FABLE_MODEL=gpt-6-astra \
-    ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-6-astra \
-    ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-6-astra \
-    ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-6-astra \
-    CLAUDE_CODE_SUBAGENT_MODEL=gpt-6-astra \
+    ANTHROPIC_MODEL=$GPT_ASTRA \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_ASTRA \
+    ANTHROPIC_DEFAULT_OPUS_MODEL=$GPT_ASTRA \
+    ANTHROPIC_DEFAULT_SONNET_MODEL=$GPT_ASTRA \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL=$GPT_ASTRA \
+    CLAUDE_CODE_SUBAGENT_MODEL=$GPT_ASTRA \
       ccp-gpt "$@"
   )
 }
 
-# Roll back to the pre-Astra flagship without editing ccp-gpt. Every slot in
-# ccp-gpt reads ${VAR:-default}, so presetting them here restores the exact
-# configuration that shipped before 2026-09-05 — same delegation pattern as
-# ccp-gpt-smart. The fleet slots (OPUS/SONNET/HAIKU→luna) never moved during the
+# Put the Sol tier (the pre-Astra flagship tier) on the flagship seats without
+# editing ccp-gpt. Every slot in ccp-gpt reads ${VAR:-default}, so presetting them
+# here is enough — same delegation pattern as ccp-gpt-smart. The fleet slots (OPUS/SONNET/HAIKU→luna) never moved during the
 # Astra promotion, so they are deliberately absent here.
-# For the pre-Astra fast tier: ANTHROPIC_DEFAULT_OPUS_MODEL=gpt-5.6-sol ccp-gpt-fast
+# For the Sol fast tier: ANTHROPIC_DEFAULT_OPUS_MODEL=$GPT_SOL ccp-gpt-fast
 ccp-sol() {
   (
-    ANTHROPIC_MODEL=gpt-5.6-sol \
-    ANTHROPIC_DEFAULT_FABLE_MODEL=gpt-5.6-sol \
-    ANTHROPIC_CUSTOM_MODEL_OPTION=gpt-5.6-sol-fast \
-    ANTHROPIC_CUSTOM_MODEL_OPTION_NAME='GPT-5.6 Sol Fast' \
+    ANTHROPIC_MODEL=$GPT_SOL \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_SOL \
+    ANTHROPIC_CUSTOM_MODEL_OPTION=${GPT_SOL}-fast \
+    ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="$(_ccp_gpt_label "$GPT_SOL") Fast" \
       ccp-gpt "$@"
   )
 }
@@ -2118,10 +2127,9 @@ ccp-mix-gpt() {
       print -P "%F{red}[ccp-mix-gpt] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
       exit 1
     fi
-    local main_model="${ANTHROPIC_MODEL:-gpt-6-astra}"
+    local main_model="${ANTHROPIC_MODEL:-$GPT_ASTRA}"
     local main_label="$main_model"
-    [[ "$main_model" == "gpt-6-astra" ]] && main_label="GPT-6 Astra"
-    [[ "$main_model" == "gpt-5.6-sol" ]] && main_label="GPT-5.6 Sol"
+    [[ "$main_model" == ($GPT_ASTRA|$GPT_SOL|$GPT_LUNA) ]] && main_label="$(_ccp_gpt_label "$main_model")"
     print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
     ccp-free-whoami ccp-mix-gpt
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
@@ -2133,7 +2141,7 @@ ccp-mix-gpt() {
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL="$main_model"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gpt-6-astra}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_ASTRA}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
@@ -2150,7 +2158,7 @@ ccp-mix-gpt() {
   )
 }
 
-# Roll the mixed-tier flagship back to 5.6-Sol without editing ccp-mix-gpt.
+# Put the mixed-tier flagship on the Sol tier without editing ccp-mix-gpt.
 # Only the FABLE seat moves; main follows ANTHROPIC_MODEL, so presetting it here
 # keeps the astra default intact for a following bare ccp-mix-gpt. Fleet slots
 # (OPUS/SONNET/HAIKU/subagents → free(max)) never referenced FABLE and stay put.
@@ -2158,8 +2166,8 @@ ccp-mix-gpt() {
 # the cheapest subscription-billed brain that still reads as GPT wins the seat.
 ccp-mix-sol() {
   (
-    ANTHROPIC_MODEL=gpt-5.6-sol \
-    ANTHROPIC_DEFAULT_FABLE_MODEL=gpt-5.6-sol \
+    ANTHROPIC_MODEL=$GPT_SOL \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_SOL \
       ccp-mix-gpt "$@"
   )
 }
@@ -2176,7 +2184,7 @@ Available cc-vendor-bridge functions:
   ccp-mimo          → Xiaomi MiMo V2.5-Pro Token Plan (Singapore subscription)
   ccp-mimo-payg     → Xiaomi MiMo V2.5-Pro (intl PAYG)
   ccp-mimo-x        → Xiaomi MiMo X Pro (Desktop SSO axis via relay; auto-launches the app)
-  ccp-bruce         → BRUCEAI gateway api.bruceai.net, prepaid credits, GPT-5.6 slot mapping
+  ccp-bruce         → BRUCEAI gateway api.bruceai.net, prepaid credits, GPT slot mapping
                       (OPUS+FABLE→sol / SONNET+HAIKU→luna, --effort high, 272K window)
                       Context pinned at the 272K billing cliff: past it the whole request
                       is rebilled at 2x input / 1.5x output. Override: ANTHROPIC_MODEL=... /
@@ -2191,15 +2199,15 @@ Available cc-vendor-bridge functions:
   ccp-gpt           → CLIProxyAPI relay, cross-gen slot mapping (FABLE→astra / OPUS+SONNET+HAIKU→luna(max),
                       Astra effort medium / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
-  ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→gpt-6-astra (medium), OPUS/SONNET/HAIKU+subagents→free(max)
+  ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→$GPT_ASTRA (medium), OPUS/SONNET/HAIKU+subagents→free(max)
                       (= same free chain: WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM, :8317)
                       480K context window (shared free-chain ceiling)
-  ccp-mix-sol       → ccp-mix-gpt with the flagship seats rolled back to gpt-5.6-sol
+  ccp-mix-sol       → ccp-mix-gpt with the flagship seats on $GPT_SOL
                       (FABLE+main→sol at xhigh, fleet slots stay on free(max))
-  ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to gpt-6-astra;
+  ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to $GPT_ASTRA;
                       priority service tier for all Codex requests
-  ccp-gpt-smart     → All model slots forced to gpt-6-astra on the Standard service tier
-  ccp-sol           → Pre-Astra rollback: ccp-gpt routing with FABLE+main on gpt-5.6-sol
+  ccp-gpt-smart     → All model slots forced to $GPT_ASTRA on the Standard service tier
+  ccp-sol           → Sol tier: ccp-gpt routing with FABLE+main on $GPT_SOL
                       at xhigh and the picker option on sol-fast (fleet slots unchanged)
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
