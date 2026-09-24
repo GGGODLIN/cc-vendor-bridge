@@ -393,55 +393,6 @@ ccp-mimo-x() {
   )
 }
 
-# ===== StepFun step-5-preview / step-3.5-flash (PAYG 贈金 key, via CLIProxyAPI relay) =====
-# Chain: relay :8317 → litellm :8000 → https://api.stepfun.com/v1（官方明文相容 OpenAI 規範，
-# step-5-preview 另支援 Anthropic messages 協議）。WIRE 2026-09-20：三層 probe 全通、
-# 設定檔 commit 見 local-llm-gateway ecb48af。
-# 帳戶現況 2026-09-20：prepaid 贈金帳戶（/v1/accounts 實測 balance=14.94 全是 total_voucher_balance、
-# total_cash_balance=0）→ 依官方限流表落 V0 階：10 RPM／5 並發／5M TPM。綁脖子的是 RPM——
-# 探針間距 <6 秒會整批 429（SMOKE 第一輪實測 8/12 N/A，BENCH_DELAY=8 後全落點）。
-# 贈金會過期；個人充值官方只收微信支付。
-# CONTEXT WINDOW：實測 2026-09-20 單發 220,021 prompt_tokens 回 HTTP 200（官方 metadata
-# max_input=1,024,000 未逐字驗證）；釘 220000＝已驗證下界。flash 另有 metadata 262,144。
-# ⚠ 外層污染警示：本函式沿用 ${VAR:-default} 慣例，.zshrc 已 export 的 ANTHROPIC_MODEL 等
-# 會蓋掉預設。要保證打到 stepfun，呼叫點前綴釘死：ANTHROPIC_MODEL=step-5-preview
-# ANTHROPIC_DEFAULT_OPUS_MODEL=... CLAUDE_CODE_SUBAGENT_MODEL=step-3.5-flash ccp-stepfun ...
-# reasoning 模型：max_tokens 給小了思考會燒光正文、content 欄空（SMOKE T0.3 兩顆皆 FAIL）；
-# 呼叫端要給 ≥8000 並檢查 content 與 reasoning_content 兩個欄位。
-ccp-stepfun() {
-  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
-    echo "ccp-stepfun: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
-    return 1
-  fi
-  if ! /usr/bin/nc -z 127.0.0.1 8000 2>/dev/null; then
-    echo "[ccp-stepfun] litellm not listening, kickstarting..." >&2
-    launchctl kickstart "gui/$UID/com.gggodlin.litellm-proxy" 2>/dev/null
-    sleep 10
-  fi
-  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
-    echo "[ccp-stepfun] relay not listening, kickstarting..." >&2
-    launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
-    sleep 5
-  fi
-  (
-    source ~/.cli-proxy-api/keys.env
-    unset ANTHROPIC_API_KEY
-    export CC_VENDOR=stepfun
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-step-5-preview}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-step-5-preview}
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-step-5-preview}
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-step-3.5-flash}
-    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-step-3.5-flash}
-    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-220000}
-    _cc_vendor_claude "$@"
-  )
-}
-
 # ===== BRUCEAI gateway — GPT-5.6 family, prepaid credits =====
 # Official docs: https://www.bruceai.net/docs/claude-code · pricing: /pricing
 # Rebuilt 2026-08-17 against api.bruceai.net. The internal-test Cloud Run hosts
@@ -1262,7 +1213,7 @@ ccp-gpt() {
     # (docs/en/prompt-caching: compaction replaces message history, reuses system prompt);
     # ~/.claude/hooks/gpt-convergence-reminder.sh carries the same rules on the
     # SessionStart(compact) path for GPT sessions this launcher did not start.
-    local _rules="背景工作等待：Agent 與背景 Bash 完成時，harness 會自動送 task-notification 回來喚醒 session，不需要主動確認。派工後直接進行下一件不相依的工作，不要用 TaskOutput block=true 站著等結果；只有在沒有其他可做的事、且必須拿到該結果才能繼續時才查一次，查完仍未完成就回去做別的，不要連續輪詢。撞錯先修根因：遇到格式、參數、路徑、空行這類小失敗，先判斷根因是否三行內可修，可修就直接修，不要因為一個小錯改走另一條執行路徑（改跑 headless claude -p、換一套工具鏈、繞去別的入口）——換路會帶進一整組新的失敗模式，而原始根因仍未解決；確實需要換路時，先說明為什麼根因不可修，再換。人類專屬點交還上限：撞到只有使用者能做或能拍板的事（sudo／GUI 操作／互動式 auth／憑證設定／系統升級，或範圍・權威・對外行為・風險的拍板），同一點最多嘗試 2 次，用盡即交還、不得換路硬撐。交還內容自包含（讀的人沒有你的對話與檔案）：脈絡一句／每個選項附一句後果／建議＋理由一句；能標假設續跑的先列「我假設 1…N」續跑，不能的就收工。"
+    local _rules="背景工作等待：Agent 與背景 Bash 完成時，harness 會自動送 task-notification 回來喚醒 session，不需要主動確認。派工後直接進行下一件不相依的工作，不要用 TaskOutput block=true 站著等結果；只有在沒有其他可做的事、且必須拿到該結果才能繼續時才查一次，查完仍未完成就回去做別的，不要連續輪詢；反覆用 ListAgents 查狀態、或用 date／true／sleep 這類空指令耗時間等通知，也是輪詢，同樣不要做，等待期間沒有別的事可做時直接結束這一輪，通知到了 harness 會自動叫醒你。撞錯先修根因：遇到格式、參數、路徑、空行這類小失敗，先判斷根因是否三行內可修，可修就直接修，不要因為一個小錯改走另一條執行路徑（改跑 headless claude -p、換一套工具鏈、繞去別的入口）——換路會帶進一整組新的失敗模式，而原始根因仍未解決；確實需要換路時，先說明為什麼根因不可修，再換。人類專屬點交還上限：撞到只有使用者能做或能拍板的事（sudo／GUI 操作／互動式 auth／憑證設定／系統升級，或範圍・權威・對外行為・風險的拍板），同一點最多嘗試 2 次，用盡即交還、不得換路硬撐。交還內容自包含（讀的人沒有你的對話與檔案）：脈絡一句／每個選項附一句後果／建議＋理由一句；能標假設續跑的先列「我假設 1…N」續跑，不能的就收工。"
     local main_effort
     main_effort=$(_ccp_effort_for_model "$ANTHROPIC_MODEL")
     [[ -z "$main_effort" ]] && main_effort=medium
@@ -1575,90 +1526,6 @@ _ccp_free_workbuddy_status() {
     print -r -- 0
   fi
   return 0
-}
-
-# ===== StepFun 鏈腿＋額度快照（ccp-free-whoami 內嵌段，非獨立入口） =====
-# 2026-09-20 使用者拍板：不給獨立 status——沒人會記得去看；訊號長在 ccp-free-whoami 輸出裡。
-# 探測預設開；測試環境設 CCP_FREE_STEPFUN_PROBE=off 整段靜默（契約測試的 curl 計數不受污染）。
-# 三軸：GET /v1/accounts 餘額（key 讀 litellm plist STEPFUN_KEY，不另存明文）、今日 litellm
-# callback log 的 step-* 狀態碼（402=額度耗盡實錘、429=限流非耗盡）、relay config 鏈腿登記
-# （free p34／free-smart p89，2026-09-20 拍板位置＝mimo 正後方）。餘額地板預設 ¥2，
-# CCP_FREE_STEPFUN_FLOOR 可覆蓋。litellm 看不到 vendor 餘額——本段是主動對帳的唯一入口。
-_ccp_stepfun_summary() {
-  local caller="$1"
-  [[ "${CCP_FREE_STEPFUN_PROBE:-on}" == "off" ]] && return 0
-  local plist="${CCP_FREE_STEPFUN_PLIST:-$HOME/Library/LaunchAgents/com.gggodlin.litellm-proxy.plist}"
-  local floor="${CCP_FREE_STEPFUN_FLOOR:-2}"
-  local log_file="${CCP_FREE_LITELLM_LOG_FILE:-$HOME/.local/state/litellm/calls-$(date +%F).jsonl}"
-  local relay_config="${CCP_FREE_CONFIG_FILE:-$HOME/.cli-proxy-api/config.yaml}"
-  local curl_bin="${CCP_FREE_CURL_BIN:-/usr/bin/curl}"
-  [[ -r "$plist" ]] || return 0
-  local key accounts
-  key=$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:STEPFUN_KEY' "$plist" 2>/dev/null)
-  [[ -z "$key" ]] && return 0
-  accounts=$("$curl_bin" -fsS --max-time 2 -H "Authorization: Bearer $key" https://api.stepfun.com/v1/accounts 2>/dev/null) || accounts=""
-  python3 - "$caller" "$accounts" "$floor" "$log_file" "$relay_config" <<'PY'
-import json, sys, os
-caller, accounts_raw, floor_s, log_file, relay_config = sys.argv[1:6]
-floor = float(floor_s)
-lines = []
-counts = {"success": 0, "failure": 0, "http_402": 0, "http_429": 0, "other_fail": 0}
-if os.path.exists(log_file):
-    for line in open(log_file, encoding="utf-8", errors="replace"):
-        if "step-" not in line:
-            continue
-        try:
-            d = json.loads(line)
-        except Exception:
-            continue
-        if not str(d.get("model", "")).startswith("step-"):
-            continue
-        if d.get("status") == "success":
-            counts["success"] += 1
-        else:
-            counts["failure"] += 1
-            blob = line.lower()
-            if "402" in blob or "insufficient" in blob:
-                counts["http_402"] += 1
-            elif "429" in blob or "rate" in blob:
-                counts["http_429"] += 1
-            else:
-                counts["other_fail"] += 1
-log_part = f"今日 step-* {counts['success']}勝/{counts['failure']}敗（402×{counts['http_402']}、429×{counts['http_429']}）"
-legs = {}
-try:
-    import yaml
-    cfg = yaml.safe_load(open(relay_config))
-    for p in cfg.get("openai-compatibility", []):
-        for m in p.get("models", []):
-            if m.get("alias") in ("free", "free-smart") and str(p.get("name", "")).startswith("stepfun"):
-                legs[m["alias"]] = p.get("priority")
-except Exception:
-    pass
-leg_part = "、".join(f"{a}(p{pr})" for a, pr in sorted(legs.items())) if legs else "⚠️ 鏈腿登記消失"
-if accounts_raw:
-    try:
-        a = json.loads(accounts_raw)
-        bal = float(a.get("balance", 0))
-        voucher = float(a.get("total_voucher_balance", 0))
-        money_part = f"餘額 ¥{bal:.2f}（贈金 ¥{voucher:.2f}，地板 ¥{floor:g}）"
-        if bal <= 0 and voucher <= 0:
-            lines.append(f"[{caller}] ⚠️  StepFun：餘額與贈金皆 0——疑似額度耗盡；{leg_part}")
-        elif bal < floor:
-            lines.append(f"[{caller}] ⚠️  StepFun：{money_part}低於地板——建議拔鏈腿只留 ccp-stepfun 手動入口；{leg_part}；{log_part}")
-        else:
-            lines.append(f"[{caller}] StepFun：鏈腿 {leg_part} 在位；{money_part}；{log_part}")
-    except Exception:
-        lines.append(f"[{caller}] StepFun：餘額解析失敗；{leg_part}；{log_part}")
-else:
-    lines.append(f"[{caller}] StepFun：帳戶探測失敗（網路或 key，不代表額度耗盡）；鏈腿 {leg_part}；{log_part}")
-if counts["http_402"] > 0:
-    lines.append(f"[{caller}] ⚠️  StepFun：log 有 402/insufficient×{counts['http_402']}——額度耗盡實錘；鏈自動繞過死腿，充值後 kickstart relay 解冷卻")
-elif counts["http_429"] > 0:
-    lines.append(f"[{caller}] StepFun：429×{counts['http_429']} 為限流（V0 10 RPM 特徵）、非額度問題")
-for ln in lines:
-    print(ln)
-PY
 }
 
 ccp-free-whoami() {
@@ -1997,13 +1864,6 @@ ccp-free-whoami() {
     print -P "%F{yellow}          細節排查：ccp-free-whoami / tail -f ~/.cline2api/service.log%f" >&2
   fi
 
-  _ccp_stepfun_summary "$caller" | while IFS= read -r _sf_line; do
-    if [[ "$_sf_line" == *⚠️* ]]; then
-      print -P "%F{yellow}${_sf_line}%f" >&2
-    else
-      print -r -- "$_sf_line" >&2
-    fi
-  done
   return 0
 }
 
