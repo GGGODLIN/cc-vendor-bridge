@@ -41,10 +41,14 @@ _cc_vendor_claude() {
   command "$launcher" "$@"
 }
 
-# GPT tier → current version. Launchers reference tiers only; bump versions here.
-GPT_ASTRA=gpt-6-astra
-GPT_SOL=gpt-6-sol
-GPT_LUNA=gpt-6-luna
+# GPT tier → current version. Launchers reference tiers only; the table itself lives outside this
+# repo because hooks, watchers and other non-ccp callers must bump in the same place.
+CCP_GPT_MODELS_FILE=${CCP_GPT_MODELS_FILE:-$HOME/.claude/config/gpt-models.env}
+if [[ -r $CCP_GPT_MODELS_FILE ]]; then
+  source "$CCP_GPT_MODELS_FILE"
+else
+  print -u2 -- "[ccp] GPT 版本表讀不到：$CCP_GPT_MODELS_FILE（ccp-gpt 系列會沒有型號）"
+fi
 
 _ccp_effort_for_model() {
   case "$1" in
@@ -878,12 +882,12 @@ ccp-relay() {
     export CC_VENDOR=relay
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-gpt-5.5}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-gpt-5.5}
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-gpt-5.5}
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-$GPT_SOL}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_SOL}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$GPT_SOL}
     # HAIKU slot → free pool: background/summarization traffic costs nothing.
     export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-ds-flash}
-    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-gpt-5.5}
+    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-$GPT_SOL}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     # --disallowed-tools WebSearch — untested how CLIProxyAPI translates the
@@ -2053,7 +2057,7 @@ Available cc-vendor-bridge functions:
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
   ccp-free          → CLIProxyAPI free(max) chain: WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM (:8317)
-  ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default gpt-5.5 via Codex team OAuth;
+  ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default GPT Sol tier via Codex OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
   ccp-gpt           → CLIProxyAPI relay, cross-gen slot mapping (FABLE→astra / OPUS+SONNET+HAIKU→luna(max),
