@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # 本檔在契約測試底下：改完必跑（從 repo root）：zsh tests/ccp-free-wrapper.test.zsh
-# 契約（2026-09-11 改版）：ccp-free 與 ccp-mix-gpt 共用 CLIProxyAPI :8317 的 free(max) chain：
-# WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM；offline FreeLLMAPI 不屬於有效備援。
+# 契約：ccp-free 與 ccp-mix-gpt 共用 CLIProxyAPI :8317 的 free(max) chain；
+# owner 順序從 relay config 動態讀取，disabled provider 與 offline FreeLLMAPI 不屬於有效備援。
 set -u
 
 ROOT="${0:A:h:h}"
@@ -189,11 +189,11 @@ openai-compatibility:
     models:
       - name: "bai-glm"
         alias: "free"
-  - name: "mimo-desktop-smart"
-    priority: 90
+  - name: "agentrouter-astra-smart"
+    priority: 95
     disabled: false
     models:
-      - name: "mimo-x-pro"
+      - name: "agentrouter-astra"
         alias: "free-smart"
   - name: "cline-free-glm-smart"
     priority: 65
@@ -387,7 +387,7 @@ if [[ "$LIST_OUTPUT" == *'ccp-free'* ]]; then
 else
   bad 'ccp-list exposes ccp-free'
 fi
-if [[ "$LIST_OUTPUT" == *'WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM'* ]]; then
+if [[ "$LIST_OUTPUT" == *'owners and priority read from relay config'* ]]; then
   ok 'ccp-list identifies the current free chain'
 else
   bad 'ccp-list identifies the current free chain'
@@ -467,7 +467,7 @@ assert_file_line 'WorkBuddy accounts probe sends its bearer credential' "$FIXTUR
 assert_output_contains 'free pool reports disabled FreeLLMAPI' '[ccp-free] FreeLLMAPI：已停用'
 assert_output_contains 'WorkBuddy reports the sidecar and account health' '[ccp-free] WorkBuddy V4.1：sidecar up；1/1 帳號 ready；350/350 credits remaining；model route 未探活'
 assert_output_contains 'WorkBuddy is the first owner so predicts itself' '[ccp-free] 預計使用：WorkBuddy V4.1（free(max)）'
-assert_output_contains 'smart chain reports the capability-ordered route' '[ccp-free] free-smart(max) route（config）：MiMo X Pro → Cline GLM（上游健康未知）'
+assert_output_contains 'smart chain reports the capability-ordered route' '[ccp-free] free-smart(max) route（config）：AgentRouter Astra → Cline GLM（上游健康未知）'
 assert_output_not_contains 'healthy free pool omits warning marker' '⚠️'
 assert_output_not_contains 'free pool output omits client key' "$CC_KEY"
 assert_output_not_contains 'free pool output omits management key' 'mgmt-test'

@@ -333,70 +333,6 @@ ccp-mimo-payg() {
   )
 }
 
-# ===== Xiaomi MiMo X Pro (Desktop SSO axis, via CLIProxyAPI relay) =====
-# Chain: relay :8317 → litellm :8000 → mimo-sso-adapter :8320 → MiMo Desktop engine.
-# The three services are launchd KeepAlive, but the Desktop app is a GUI app launchd
-# cannot supervise — adapter returns 503 whenever it is closed or logged out, so this
-# function launches it and waits for the adapter to answer.
-# Capability snapshot 2026-09-17: code 題全滿分、tool 鏈與 agentic edit 乾淨、繁中乾淨；
-# 弱點是延遲不穩（同一句短請求實測 0.9–30.1 秒）。`reasoning_effort` 回 400 不支援。
-# CONTEXT WINDOW 實測 2026-09-17：硬上限 1,048,576 (2^20)。超過**不報錯、靜默截斷尾端**
-# ——送 1.2M 與 1.4M 兩次都回報 prompt_tokens=1,048,570 且尾端指令沒被執行。1,023,284
-# tokens 實測完整讀到尾。CC 不認得這個 model id，預設會假設 200K 並據此 auto-compact，
-# 所以這裡把真實窗口釘上去。
-# reasoning_effort：MiMo 上游回 400 不支援，而 CC 會自動帶。已在 litellm 那層用
-# drop_params + additional_drop_params 丟棄（local-llm-gateway config），不需在此處理。
-ccp-mimo-x() {
-  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
-    echo "ccp-mimo-x: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
-    return 1
-  fi
-  if ! pgrep -qf "Xiaomi MiMo AI"; then
-    echo "[ccp-mimo-x] MiMo Desktop not running, launching..." >&2
-    open -ga "Xiaomi MiMo AI" 2>/dev/null || {
-      echo "[ccp-mimo-x] could not launch /Applications/Xiaomi MiMo AI.app" >&2
-      return 1
-    }
-  fi
-  local i=0
-  while (( i < 60 )); do
-    /usr/bin/curl -sf -m 3 -o /dev/null \
-      -H "Authorization: Bearer mimo-local" http://127.0.0.1:8320/health 2>/dev/null && break
-    sleep 0.5; ((i++))
-  done
-  if (( i >= 60 )); then
-    echo "[ccp-mimo-x] adapter :8320 not healthy after 30s — is MiMo Desktop logged in?" >&2
-    return 1
-  fi
-  if ! /usr/bin/nc -z 127.0.0.1 8000 2>/dev/null; then
-    echo "[ccp-mimo-x] litellm not listening, kickstarting..." >&2
-    launchctl kickstart "gui/$UID/com.gggodlin.litellm-proxy" 2>/dev/null
-    sleep 10
-  fi
-  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
-    echo "[ccp-mimo-x] relay not listening, kickstarting..." >&2
-    launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
-    sleep 5
-  fi
-  (
-    source ~/.cli-proxy-api/keys.env
-    unset ANTHROPIC_API_KEY
-    export CC_VENDOR=mimo-x
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-mimo-x-pro}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-mimo-x-pro}
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-mimo-x-pro}
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-mimo-x-pro}
-    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-mimo-x-pro}
-    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
-    _cc_vendor_claude "$@"
-  )
-}
-
 # ===== BRUCEAI gateway — GPT-5.6 family, prepaid credits =====
 # Official docs: https://www.bruceai.net/docs/claude-code · pricing: /pricing
 # Rebuilt 2026-08-17 against api.bruceai.net. The internal-test Cloud Run hosts
@@ -1556,10 +1492,12 @@ ccp-free-whoami() {
         if (value == "workbuddy-v41") return "WorkBuddy V4.1"
         if (value == "bai-glm") return "B.AI GLM"
         if (value == "agentrouter-glm") return "AgentRouter GLM"
+        if (value == "agentrouter-astra") return "AgentRouter Astra"
         if (value == "cline-free-ds") return "Cline DeepSeek"
         if (value == "cline-free-v41") return "Cline V4.1"
         if (value == "cline-free-muse") return "Cline Muse"
-        if (value == "mimo-desktop") return "MiMo X Pro"
+        if (value == "cline-free-mimo26") return "Cline MiMo 2.6"
+        if (value == "cline-stealth-bunny") return "Cline Bunny"
         if (value == "atkins-devin-swe2") return "Devin SWE-2"
         if (value == "freellmapi") return "FreeLLMAPI"
         return value
@@ -1909,12 +1847,11 @@ ccp-free() {
     export CC_VENDOR=free
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    # Main slot defaults to the capability-ordered twin chain (first leg MiMo X Pro);
-    # /model free(max) switches back to the stability-ordered chain in-session.
+    # Main slot defaults to the capability-ordered twin chain; /model free(max)
+    # switches back to the stability-ordered chain in-session.
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-free-smart(max)}"
-    # FABLE slot is the capability-ordered twin of the free chain: same nine legs,
-    # reordered mimo → swe2 → (rest keep their stability order). Relay alias
-    # free-smart, config entries `*-smart`. Switch with /model inside the session.
+    # FABLE uses the same active legs as free, reordered by capability in the relay
+    # config. Switch between free-smart and free with /model inside the session.
     export ANTHROPIC_DEFAULT_FABLE_MODEL='free-smart(max)'
     export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
@@ -2047,7 +1984,6 @@ Available cc-vendor-bridge functions:
   ccp-glm           → Zhipu GLM-5.1 / 4.7-Flash (z.ai intl)
   ccp-mimo          → Xiaomi MiMo V2.5-Pro Token Plan (Singapore subscription)
   ccp-mimo-payg     → Xiaomi MiMo V2.5-Pro (intl PAYG)
-  ccp-mimo-x        → Xiaomi MiMo X Pro (Desktop SSO axis via relay; auto-launches the app)
   ccp-bruce         → BRUCEAI gateway api.bruceai.net, prepaid credits, GPT slot mapping
                       (OPUS+FABLE→sol / SONNET+HAIKU→luna, --effort high, 272K window)
                       Context pinned at the 272K billing cliff: past it the whole request
@@ -2056,7 +1992,7 @@ Available cc-vendor-bridge functions:
   ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
                       Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
                       Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
-  ccp-free          → CLIProxyAPI free(max) chain: WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM (:8317)
+  ccp-free          → CLIProxyAPI free(max) / free-smart(max) chains (:8317; owners and priority read from relay config)
   ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default GPT Sol tier via Codex OAuth;
                       HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
                       Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
@@ -2064,7 +2000,7 @@ Available cc-vendor-bridge functions:
                       Astra effort medium / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
                       concurrency 3, 1M context, tool search off)
   ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→$GPT_ASTRA (medium), OPUS/SONNET/HAIKU+subagents→free(max)
-                      (= same free chain: WorkBuddy V4.1 → Cline GLM → Cline DeepSeek → AgentRouter GLM → B.AI GLM, :8317)
+                      (= same relay-managed free chain as ccp-free, :8317)
                       480K context window (shared free-chain ceiling)
   ccp-mix-sol       → ccp-mix-gpt with the flagship seats on $GPT_SOL
                       (FABLE+main→sol at xhigh, fleet slots stay on free(max))
