@@ -1902,10 +1902,23 @@ ccp-mix-gpt() {
       print -P "%F{red}[ccp-mix-gpt] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
       exit 1
     fi
+    # CLAUDE_CODE_MAX_CONTEXT_TOKENS (480K below) applies to every model CC does not
+    # know, so the GPT seats would share the free fleet's ceiling. [1m] makes CC give
+    # them a 1M window instead and is stripped before sending; compaction is then held
+    # at ccp-gpt's 900K, under the ~922K backend ceiling. Other main overrides keep
+    # 480K because their real ceiling is unknown here.
     local main_model="${ANTHROPIC_MODEL:-$GPT_ASTRA}"
     local main_label="$main_model"
     local main_base="${main_model%\[1m\]}"
-    [[ "$main_base" == ($GPT_ASTRA|$GPT_SOL|$GPT_LUNA) ]] && main_label="$(_ccp_gpt_label "$main_base")"
+    local main_is_gpt_tier=''
+    if [[ "$main_base" == ($GPT_ASTRA|$GPT_SOL|$GPT_LUNA) ]]; then
+      main_is_gpt_tier=1
+      main_label="$(_ccp_gpt_label "$main_base")"
+      main_model="${main_base}[1m]"
+    fi
+    local fable_model="${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_ASTRA}"
+    local fable_base="${fable_model%\[1m\]}"
+    [[ "$fable_base" == ($GPT_ASTRA|$GPT_SOL|$GPT_LUNA) ]] && fable_model="${fable_base}[1m]"
     print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
     ccp-free-whoami ccp-mix-gpt
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
@@ -1917,12 +1930,15 @@ ccp-mix-gpt() {
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL="$main_model"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_ASTRA}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="$fable_model"
     export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_SONNET_MODEL='free(max)'
     export ANTHROPIC_DEFAULT_HAIKU_MODEL='free(max)'
     export CLAUDE_CODE_SUBAGENT_MODEL='free(max)'
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-480000}
+    if [[ -n "$main_is_gpt_tier" ]]; then
+      export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-900000}
+    fi
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=${CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY:-3}
@@ -1942,14 +1958,8 @@ ccp-mix-gpt() {
 # the cheapest subscription-billed brain that still reads as GPT wins the seat.
 ccp-mix-sol() {
   (
-    # [1m] makes CC give the Sol seats a 1M window while CLAUDE_CODE_MAX_CONTEXT_TOKENS
-    # keeps the free(max) fleet at 480K — that cap applies to every model CC does not
-    # know, so without the suffix Sol would sit at 480K too. CC strips [1m] before
-    # sending. The backend ceiling is ~922K (see ccp-gpt), so compaction is held at the
-    # same 900K window ccp-gpt uses.
-    ANTHROPIC_MODEL="${GPT_SOL}[1m]" \
-    ANTHROPIC_DEFAULT_FABLE_MODEL="${GPT_SOL}[1m]" \
-    CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-900000} \
+    ANTHROPIC_MODEL=$GPT_SOL \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_SOL \
       ccp-mix-gpt "$@"
   )
 }
@@ -1982,10 +1992,9 @@ Available cc-vendor-bridge functions:
                       concurrency 3, 1M context, tool search off)
   ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→$GPT_ASTRA (medium), OPUS/SONNET/HAIKU+subagents→free(max)
                       (= same relay-managed free chain as ccp-free, :8317)
-                      480K context window (shared free-chain ceiling)
+                      GPT main 1M window compacting at 900K, free fleet at 480K
   ccp-mix-sol       → ccp-mix-gpt with the flagship seats on $GPT_SOL
-                      (FABLE+main→sol at xhigh with a 1M window compacting at 900K,
-                      fleet slots stay on free(max) at 480K)
+                      (FABLE+main→sol at xhigh, fleet slots stay on free(max))
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to $GPT_ASTRA;
                       priority service tier for all Codex requests
   ccp-gpt-smart     → All model slots forced to $GPT_ASTRA on the Standard service tier

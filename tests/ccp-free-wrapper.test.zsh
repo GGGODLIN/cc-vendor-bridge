@@ -895,11 +895,13 @@ assert_output_not_contains 'mixed wrapper output omits account email' 'alpha@exa
 assert_output_not_contains 'mixed wrapper output omits refresh token canary' 'REFRESH-CANARY'
 assert_output_not_contains 'mixed wrapper output omits account ID canary' 'ACCOUNT-CANARY'
 assert_output_not_contains 'mixed wrapper output omits nested canary' 'NESTED-CANARY'
-assert_file_line 'mixed wrapper keeps GPT main model' "$FIXTURE/capture.log" 'model=gpt-6-astra'
+assert_file_line 'mixed wrapper gives the GPT main a 1M window' "$FIXTURE/capture.log" "model=${GPT_ASTRA}[1m]"
 assert_file_line 'mixed wrapper pins Astra effort flag' "$FIXTURE/capture.log" 'arg1=--effort'
 assert_file_line 'mixed wrapper pins Astra to medium' "$FIXTURE/capture.log" 'arg2=medium'
 assert_file_line 'mixed wrapper keeps model flag after effort' "$FIXTURE/capture.log" 'arg3=--model'
-assert_file_line 'mixed wrapper passes Astra after model flag' "$FIXTURE/capture.log" 'arg4=gpt-6-astra'
+assert_file_line 'mixed wrapper passes Astra after model flag' "$FIXTURE/capture.log" "arg4=${GPT_ASTRA}[1m]"
+assert_file_line 'mixed wrapper keeps the free fleet at 480K' "$FIXTURE/capture.log" 'max_context_tokens=480000'
+assert_file_line 'mixed wrapper compacts the GPT main under the backend ceiling' "$FIXTURE/capture.log" 'auto_compact_window=900000'
 assert_file_line 'mixed wrapper marks GPT main for startup convergence' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
 assert_file_line 'mixed wrapper keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 assert_file_line 'mixed wrapper keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
@@ -911,7 +913,7 @@ setup_fixture
 invoke_wrapper ready '' ccp-mix-gpt
 assert_status 'mixed wrapper survives status failure' 0
 assert_output_contains 'mixed wrapper prefixes status failure' '[ccp-mix-gpt] 無法查詢免費池狀態'
-assert_file_line 'mixed status failure preserves GPT main' "$FIXTURE/capture.log" 'model=gpt-6-astra'
+assert_file_line 'mixed status failure preserves GPT main' "$FIXTURE/capture.log" "model=${GPT_ASTRA}[1m]"
 assert_file_line 'mixed status failure still invokes claude' "$FIXTURE/capture.log" 'called=1'
 teardown_fixture
 
@@ -922,6 +924,7 @@ assert_status 'mixed main override returns success' 0
 assert_output_contains 'mixed main summary follows override' '[ccp-mix-gpt] Main：ds-free'
 assert_output_not_contains 'mixed main summary does not claim default Sol' '[ccp-mix-gpt] Main：GPT-6 Sol'
 assert_file_line 'mixed main override reaches claude' "$FIXTURE/capture.log" 'model=ds-free'
+assert_file_line 'mixed non-GPT override leaves the compaction window alone' "$FIXTURE/capture.log" 'auto_compact_window='
 assert_file_line 'mixed non-GPT override keeps the generic vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix'
 assert_file_line 'mixed main override preserves free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 teardown_fixture
