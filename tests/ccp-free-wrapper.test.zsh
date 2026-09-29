@@ -927,17 +927,21 @@ assert_file_line 'mixed main override preserves free Opus slot' "$FIXTURE/captur
 teardown_fixture
 
 print -r -- '── ccp-mix-sol rollback'
+# Sol's version comes from the shared GPT table, so read it rather than pinning one.
+SOL_1M="${GPT_SOL}[1m]"
 setup_fixture
 : > "$FIXTURE/ready"
 invoke_wrapper ready '' ccp-mix-sol selector
 assert_status 'mix-sol wrapper returns success' 0
-assert_output_contains 'mix-sol wrapper reports Sol main route' '[ccp-mix-gpt] Main：GPT-6 Sol'
-assert_file_line 'mix-sol pins main to sol' "$FIXTURE/capture.log" 'model=gpt-6-sol'
+assert_output_contains 'mix-sol wrapper reports Sol main route' "[ccp-mix-gpt] Main：$(_ccp_gpt_label "$GPT_SOL")"
+assert_file_line 'mix-sol pins main to sol with a 1M window' "$FIXTURE/capture.log" "model=$SOL_1M"
 assert_file_line 'mix-sol pins Sol effort flag' "$FIXTURE/capture.log" 'arg1=--effort'
 assert_file_line 'mix-sol pins Sol to xhigh' "$FIXTURE/capture.log" 'arg2=xhigh'
 assert_file_line 'mix-sol keeps model flag after effort' "$FIXTURE/capture.log" 'arg3=--model'
-assert_file_line 'mix-sol passes Sol after model flag' "$FIXTURE/capture.log" 'arg4=gpt-6-sol'
-assert_file_line 'mix-sol pins FABLE to sol' "$FIXTURE/capture.log" 'fable_model=gpt-6-sol'
+assert_file_line 'mix-sol passes Sol after model flag' "$FIXTURE/capture.log" "arg4=$SOL_1M"
+assert_file_line 'mix-sol pins FABLE to sol' "$FIXTURE/capture.log" "fable_model=$SOL_1M"
+assert_file_line 'mix-sol keeps the free fleet at 480K' "$FIXTURE/capture.log" 'max_context_tokens=480000'
+assert_file_line 'mix-sol compacts Sol under the backend ceiling' "$FIXTURE/capture.log" 'auto_compact_window=900000'
 assert_file_line 'mix-sol keeps GPT vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
 assert_file_line 'mix-sol keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 assert_file_line 'mix-sol keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
@@ -947,7 +951,7 @@ setup_fixture
 : > "$FIXTURE/ready"
 invoke_wrapper ready '' ccp-mix-sol
 assert_status 'mix-sol direct mode returns success' 0
-assert_file_line 'mix-sol overrides outer FABLE preset' "$FIXTURE/capture.log" 'fable_model=gpt-6-sol'
+assert_file_line 'mix-sol overrides outer FABLE preset' "$FIXTURE/capture.log" "fable_model=$SOL_1M"
 teardown_fixture
 
 setup_fixture
