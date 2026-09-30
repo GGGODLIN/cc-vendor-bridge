@@ -199,18 +199,18 @@ if (( ${+functions[ccp-gpt-smart]} )); then
   unset CLAUDE_CODE_SUBAGENT_MODEL ANTHROPIC_CUSTOM_HEADERS
 
   assert_eq \
-    "ccp-gpt-smart forces every model slot to Standard Astra" \
-    "gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|" \
+    "ccp-gpt-smart keeps main and Fable on Astra and maps other slots to Sol" \
+    "${GPT_ASTRA}|${GPT_ASTRA}|${GPT_SOL}|${GPT_SOL}|${GPT_SOL}|${GPT_SOL}|" \
     "$(ccp-gpt-smart)"
 
   assert_eq \
     "ccp-gpt-smart overrides inherited model routing" \
-    "gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|" \
+    "${GPT_ASTRA}|${GPT_ASTRA}|${GPT_SOL}|${GPT_SOL}|${GPT_SOL}|${GPT_SOL}|" \
     "$(ANTHROPIC_MODEL=gpt-5.6-sol-fast ANTHROPIC_DEFAULT_FABLE_MODEL=claude-fable-5 ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_SONNET_MODEL='gpt-5.6-luna(max)' ANTHROPIC_DEFAULT_HAIKU_MODEL='gpt-5.6-luna(max)' CLAUDE_CODE_SUBAGENT_MODEL='gpt-5.6-luna(max)' ccp-gpt-smart)"
 
   assert_eq \
     "ccp-gpt-smart removes inherited Fast header and preserves other headers" \
-    $'gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|gpt-6-astra|X-Existing: yes' \
+    "${GPT_ASTRA}|${GPT_ASTRA}|${GPT_SOL}|${GPT_SOL}|${GPT_SOL}|${GPT_SOL}|X-Existing: yes" \
     "$(ANTHROPIC_CUSTOM_HEADERS=$'X-Existing: yes\nX-CCP-Fast: 1' ccp-gpt-smart)"
 else
   print -ru2 -- "not ok - ccp-gpt-smart exists"
