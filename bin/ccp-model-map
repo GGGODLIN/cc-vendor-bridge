@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import re
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ENTRIES = (
+  "cc-luna", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
+  "ccp-mix-gpt", "ccp-mix-sol", "ccp-free", "ccp-gemini-pro", "ccp-gemini-flash",
+  "ccp-relay", "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
+)
+SLOTS = (
+  "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+)
+UNKNOWN = "未知"
+
+
+def selected_model(args, default):
+  selected = default
+  for index, arg in enumerate(args):
+    if arg == "--model" and index + 1 < len(args):
+      selected = args[index + 1]
+    elif arg.startswith("--model="):
+      selected = arg.split("=", 1)[1]
+  aliases = {"fable": 1, "opus": 2, "sonnet": 3, "haiku": 4}
+  if selected in aliases:
+    return os.environ.get(SLOTS[aliases[selected]]) or f"原生 {selected.capitalize()}"
+  return selected
+
+
+def capture(args):
+  slots = [os.environ.get(key, "") for key in SLOTS]
+  slots[0] = selected_model(args, slots[0])
+  return {"slots": slots}
+
+
+def preview(entry):
+  env = {
+    key: value for key, value in os.environ.items()
+    if not key.startswith(("ANTHROPIC_", "CLAUDE_CODE_", "GPT_"))
+    and key not in ("CC_VENDOR", "CLAUDE_CONFIG_DIR")
+  }
+  env["CCP_MODEL_MAP_PREVIEW"] = "1"
+  env["CCP_MODEL_MAP_BIN"] = str(Path(__file__).resolve())
+  if entry.startswith("ccp-"):
+    preview_source = ROOT / 'shell/ccp-functions.sh'
+    command = ["zsh", "-f", "-c", f"source {shlex.quote(str(preview_source))}; {shlex.quote(entry)}"]
+  else:
+    split_root = Path(env.get("CCP_SPLIT_ROOT", str(ROOT.parent / "cc-split-proxy")))
+    preview_source = split_root / "bin/cc-split-lib.sh"
+    command = ["bash", str(split_root / "bin" / entry)]
+  try:
+    if "CCP_MODEL_MAP_PREVIEW" not in preview_source.read_text():
+      raise ValueError(f"{entry} 未提供唯讀預覽，不能執行啟動器取得表格")
+    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=10)
+    if result.returncode != 0:
+      raise ValueError(f"{entry} 的啟動設定無法解析")
+    record = json.loads(result.stdout)
+    slots = record.get("slots")
+    if not isinstance(slots, list) or len(slots) != len(SLOTS) or not all(isinstance(value, str) for value in slots):
+      raise ValueError(f"{entry} 的啟動設定格式不符")
+    return slots
+  except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError) as error:
+    raise ValueError(f"{entry} 的啟動設定未知（{type(error).__name__}）") from None
+
+
+def read_yaml(path):
+  import yaml
+
+  try:
+    with path.open() as source:
+      data = yaml.safe_load(source)
+  except (OSError, yaml.YAMLError) as error:
+    raise ValueError(f"{path}：未知，無法讀取或解析（{type(error).__name__}）") from None
+  if not isinstance(data, dict):
+    raise ValueError(f"{path}：未知，設定根節點不是物件")
+  return data
+
+
+def downstream_model(name, base_url):
+  candidates = (
+    ("8002", "CCP_FREE_AGENTROUTER_CONFIG_FILE", Path.home() / ".local/share/litellm-agentrouter/config/agentrouter.config.yaml"),
+    ("8000", "CCP_FREE_LITELLM_CONFIG_FILE", Path.home() / "Desktop/projects/local-llm-gateway/config/litellm.config.yaml"),
+  )
+  for port, variable, default in candidates:
+    if f":{port}/" not in base_url:
+      continue
+    data = read_yaml(Path(os.environ.get(variable, str(default))))
+    deployments = data.get("model_list")
+    if not isinstance(deployments, list):
+      raise ValueError(f"{variable}：未知，model_list 格式不符")
+    for row in deployments:
+      if not isinstance(row, dict) or row.get("model_name") != name:
+        continue
+      params = row.get("litellm_params")
+      if isinstance(params, dict) and isinstance(params.get("model"), str):
+        model = params["model"]
+        return model.removeprefix("openai/responses/").removeprefix("openai/")
+    return f"{name}（終點未解析）"
+  return f"{name}（終點未解析）"
+
+
+def pools():
+  path = Path(os.environ.get("CCP_FREE_CONFIG_FILE", str(Path.home() / ".cli-proxy-api/config.yaml")))
+  providers = read_yaml(path).get("openai-compatibility")
+  if not isinstance(providers, list):
+    raise ValueError(f"{path}：未知，openai-compatibility 不是清單")
+  result = {"free": [], "free-smart": []}
+  for index, provider in enumerate(providers):
+    if not isinstance(provider, dict):
+      raise ValueError(f"{path}：未知，provider 不是物件")
+    disabled = provider.get("disabled", False)
+    if not isinstance(disabled, bool):
+      raise ValueError(f"{path}：未知，disabled 不是布林值")
+    if disabled:
+      continue
+    models = provider.get("models")
+    if not isinstance(models, list):
+      raise ValueError(f"{path}：未知，models 不是清單")
+    for model in models:
+      if not isinstance(model, dict):
+        raise ValueError(f"{path}：未知，model 不是物件")
+      alias = model.get("alias")
+      if alias is not None and not isinstance(alias, str):
+        raise ValueError(f"{path}：未知，alias 不是字串")
+      if alias not in result:
+        continue
+      name = provider.get("name")
+      target = model.get("name")
+      priority = provider.get("priority", 0)
+      base_url = provider.get("base-url", "")
+      if not isinstance(name, str) or not isinstance(target, str) or not isinstance(base_url, str):
+        raise ValueError(f"{path}：未知，候選名稱格式不符")
+      if isinstance(priority, bool) or not isinstance(priority, (int, float)):
+        raise ValueError(f"{path}：未知，priority 不是數字")
+      terminal = downstream_model(target, base_url)
+      result[alias].append((priority, index, name, terminal))
+  return {alias: sorted(rows, key=lambda row: (-row[0], row[1])) for alias, rows in result.items()}
+
+
+def versions_error():
+  path = Path(os.environ.get("CCP_GPT_MODELS_FILE", str(Path.home() / ".claude/config/gpt-models.env")))
+  try:
+    values = {}
+    for line in path.read_text().splitlines():
+      if line.startswith("GPT_") and "=" in line:
+        key, value = line.split("=", 1)
+        values[key] = value
+    required = ("GPT_ASTRA", "GPT_SOL", "GPT_LUNA")
+    if not all(values.get(key) for key in required):
+      return f"{path}：未知，版本表缺少型號"
+    if not all(re.fullmatch(r"[A-Za-z0-9._/-]+", values[key]) for key in required):
+      return f"{path}：未知，版本表型號格式不符"
+    return None
+  except OSError as error:
+    return f"{path}：未知，版本表無法讀取（{type(error).__name__}）"
+
+
+def grouped_slots(labels, values):
+  if len(set(values)) == 1:
+    return values[0]
+  groups = {}
+  for label, value in zip(labels, values):
+    groups.setdefault(value, []).append(label)
+  return "\n".join(f"{'／'.join(names)}: {value}" for value, names in groups.items())
+
+
+def render(active=None, launch=False, cli_args=()):
+  from rich import box
+  from rich.console import Console
+  from rich.table import Table
+  from rich.text import Text
+
+  errors = []
+  version_error = versions_error()
+  if version_error:
+    errors.append(version_error)
+  output = sys.stderr if launch else sys.stdout
+  width = shutil.get_terminal_size().columns
+  compact = width < 140
+  table = Table(title=Text("CC 模型映射（設定值，未探測上游可用性）"), box=box.ASCII, show_lines=True, highlight=False)
+  headings = ("入口", "主 session／Fable", "Opus／Sonnet／Haiku") if compact else ("入口", "主 session", "Fable", "Opus", "Sonnet", "Haiku")
+  for index, heading in enumerate(headings):
+    table.add_column(heading, overflow="fold", no_wrap=False, min_width=20 if compact and index == 0 else None)
+  ordered = ([active] if active else []) + [entry for entry in ENTRIES if entry != active]
+  subagents = []
+  for entry in ordered:
+    try:
+      slots = capture(cli_args)["slots"] if launch and entry == active else preview(entry)
+    except ValueError as error:
+      errors.append(str(error))
+      slots = [UNKNOWN] * len(SLOTS)
+    if entry in ("cc-luna", "cc-free"):
+      slots[1:3] = [slots[1] or "原生 Fable", slots[2] or "原生 Opus"]
+    shown = [value or "未另設" for value in slots[:5]]
+    if version_error and entry in ("ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast", "ccp-mix-gpt", "ccp-mix-sol", "ccp-relay", "ccp-bruce", "cc-luna"):
+      shown = [UNKNOWN] * 5
+    label = entry
+    if entry == active:
+      label = f"▶ {'本次啟動' if launch else '查詢入口'} {entry}"
+    cells = (label, grouped_slots(("主", "Fable"), shown[:2]), grouped_slots(("Opus", "Sonnet", "Haiku"), shown[2:])) if compact else (label, *shown)
+    table.add_row(*[Text(value) for value in cells])
+    if slots[5] and slots[5] != UNKNOWN:
+      subagents.append(f"{entry}={slots[5]}")
+  console = Console(file=output, width=width, color_system=None, highlight=False)
+  console.print(table)
+  if subagents:
+    console.print(Text("明設預設 subagent（不代表所有明示 agent model）：" + "；".join(subagents)))
+  try:
+    chains = pools()
+    for alias, rows in chains.items():
+      chain = " → ".join(row[2] for row in rows) or "無 active 候選"
+      print(f"{alias}(max): {chain}", file=output)
+    targets = dict((row[2], row[3]) for rows in chains.values() for row in rows)
+    for name, target in targets.items():
+      console.print(Text(f"  {name} → {target}"))
+  except ValueError as error:
+    errors.append(str(error))
+    print("free(max): 未知\nfree-smart(max): 未知", file=output)
+  for error in errors:
+    print(f"[ccp-list] {error}", file=sys.stderr)
+  return 1 if errors else 0
+
+
+def main():
+  if sys.argv[1:2] == ["--capture"]:
+    args = sys.argv[2:]
+    if args[:1] == ["--"]:
+      args = args[1:]
+    print(json.dumps(capture(args), ensure_ascii=False))
+    return 0
+  launch = sys.argv[1:2] == ["--launch"]
+  args = sys.argv[2:] if launch else []
+  if args[:1] == ["--"]:
+    args = args[1:]
+  if launch:
+    if not all(stream.isatty() for stream in (sys.stdin, sys.stdout, sys.stderr)):
+      return 0
+    if any(arg in ("-p", "--print", "--output-format", "mcp", "serve", "app-server") or arg.startswith(("--print=", "--output-format=")) for arg in args):
+      return 0
+    active = os.environ.get("CCP_MODEL_MAP_ENTRY") or next((entry for entry in reversed(os.environ.get("CCP_MODEL_MAP_CALLERS", "").split()) if entry in ENTRIES), None)
+    if active not in ENTRIES:
+      return 0
+  else:
+    parser = argparse.ArgumentParser(description="讀取啟動器當下的模型映射，不呼叫模型。")
+    parser.add_argument("entry", nargs="?")
+    options = parser.parse_args()
+    active = options.entry
+    if active and active not in ENTRIES:
+      print(f"[ccp-list] 不支援的入口：{active}", file=sys.stderr)
+      return 2
+  try:
+    return render(active, launch=launch, cli_args=args)
+  except ImportError as error:
+    print(f"[ccp-list] 未知，顯示所需套件未安裝（{error.name}）", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())

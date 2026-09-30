@@ -387,10 +387,10 @@ if [[ "$LIST_OUTPUT" == *'ccp-free'* ]]; then
 else
   bad 'ccp-list exposes ccp-free'
 fi
-if [[ "$LIST_OUTPUT" == *'owners and priority read from relay config'* ]]; then
-  ok 'ccp-list identifies the current free chain'
+if [[ "$LIST_OUTPUT" == *'free(max):'* && "$LIST_OUTPUT" == *'free-smart(max):'* ]]; then
+  ok 'ccp-list renders both current free chains'
 else
-  bad 'ccp-list identifies the current free chain'
+  bad 'ccp-list renders both current free chains'
 fi
 if [[ "$LIST_OUTPUT" != *'MiniMax'* && "$LIST_OUTPUT" != *'FreeLLMAPI'* ]]; then
   ok 'ccp-list omits inactive free-chain fallbacks'

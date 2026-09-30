@@ -3,6 +3,13 @@
 set -u
 
 ROOT="${0:A:h:h}"
+TEST_FIXTURE=$(mktemp -d)
+trap '/bin/rm -rf -- "$TEST_FIXTURE"' EXIT
+export CCP_GPT_MODELS_FILE="$TEST_FIXTURE/models.env"
+export CC_LUNA_MODELS_FILE="$CCP_GPT_MODELS_FILE"
+export CCP_FREE_CONFIG_FILE="$TEST_FIXTURE/relay.yaml"
+printf '%s\n' 'GPT_ASTRA=gpt-6-astra' 'GPT_SOL=gpt-6-sol' 'GPT_LUNA=gpt-6-luna' > "$CCP_GPT_MODELS_FILE"
+printf '%s\n' 'openai-compatibility: []' > "$CCP_FREE_CONFIG_FILE"
 alias claude='claude --settings '\''{"ultracode": true}'\'''
 source "$ROOT/shell/ccp-functions.sh"
 unalias claude
@@ -147,9 +154,9 @@ assert_contains \
 ccp_list_output="$(ccp-list)"
 
 assert_contains \
-  "ccp-list explains the session-only model key" \
+  "ccp-list renders the live model table" \
   "$ccp_list_output" \
-  "press s"
+  "CC 模型映射"
 
 assert_not_contains \
   "ccp-list does not recommend the persistent direct model command" \
@@ -157,12 +164,12 @@ assert_not_contains \
   "/model gpt-6-astra-fast"
 
 assert_contains \
-  "ccp-list explains only the Fast Opus routing delta" \
+  "ccp-list includes the Fast launcher" \
   "$ccp_list_output" \
-  "Same routing and context as ccp-gpt, except Opus defaults to gpt-6-astra"
+  "ccp-gpt-fast"
 
 assert_contains \
-  "ccp-list describes the all-Astra Standard wrapper" \
+  "ccp-list includes the Standard smart launcher" \
   "$ccp_list_output" \
   "ccp-gpt-smart"
 
