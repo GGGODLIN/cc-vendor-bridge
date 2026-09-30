@@ -67,6 +67,30 @@ ccp-qwen        # opens CC pointed at Qwen / DashScope intl
 
 Each function uses a subshell so env vars don't leak into your main shell. Your default `claude` command still hits Anthropic.
 
+## 即時模型映射表
+
+重新載入 shell 函式後，可手動查看完整非直連映射：
+
+```bash
+ccp-list
+ccp-list ccp-sol
+```
+
+第二個指令仍顯示整張表，但將查詢入口置頂。互動啟動時，支援的 ccp 入口及 `cc-luna`／`cc-free` 會先顯示同張表，標記「▶ 本次啟動」；print 與非互動模式不自動插入表格。
+
+資料直接取自啟動器的唯讀預覽、共用 GPT 版本表與現行免費池設定，不另維護槽位字串。表格描述設定值，不代表上游健康、quota 或實際模型權重已驗證；缺資料時顯示未知。啟動後的 `/model` 切換不會持續更新這張啟動表。
+
+顯示程式使用 Python 的 Rich 與 PyYAML。顯示失敗只回報診斷，不更改既有模型選擇。已開啟的 shell 需重新 source 啟動器，或開啟新的 shell，才會載入新函式。
+
+局部驗證配方：
+
+```bash
+python3 tests/test_model_map.py
+python3 tests/test_launch_model_map.py
+```
+
+測試以隔離版本／relay 設定、偽終端和假 CC 程式觀察實際啟動器輸出，不呼叫真實模型或啟停服務。
+
 ## Caveats — verify before relying on these
 
 The vendor docs don't list these failure modes. 10 caveats catalogued so far:

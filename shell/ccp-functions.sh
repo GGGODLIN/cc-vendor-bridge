@@ -36,19 +36,54 @@
 # zsh idiom: %x = currently-sourced file path; :A = absolute; :h = parent dir.
 _CC_VENDOR_BRIDGE_DIR="${${(%):-%x}:A:h:h}"
 
-_cc_vendor_claude() {
-  local launcher="${CC_CLAUDE_BIN:-claude}"
+_ccp_model_map_preview() {
+  [[ "${CCP_MODEL_MAP_PREVIEW:-0}" == 1 ]]
+}
+
+_ccp_run_claude() {
+  local launcher="$1"
+  shift
+  if _ccp_model_map_preview; then
+    python3 "${CCP_MODEL_MAP_BIN:-${_CC_VENDOR_BRIDGE_DIR}/bin/ccp-model-map}" --capture -- "$@"
+    return
+  fi
+  if [[ -t 0 && -t 1 && -t 2 ]]; then
+    CCP_MODEL_MAP_ENTRY='' CCP_MODEL_MAP_CALLERS="${(j: :)funcstack}" CCP_GPT_MODELS_FILE="$CCP_GPT_MODELS_FILE" \
+      python3 "${CCP_MODEL_MAP_BIN:-${_CC_VENDOR_BRIDGE_DIR}/bin/ccp-model-map}" --launch -- "$@" \
+      || print -ru2 -- '[ccp] 映射表顯示失敗，保留原啟動設定繼續。'
+  fi
   command "$launcher" "$@"
+}
+
+_cc_vendor_claude() {
+  _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "$@"
 }
 
 # GPT tier → current version. Launchers reference tiers only; the table itself lives outside this
 # repo because hooks, watchers and other non-ccp callers must bump in the same place.
 CCP_GPT_MODELS_FILE=${CCP_GPT_MODELS_FILE:-$HOME/.claude/config/gpt-models.env}
-if [[ -r $CCP_GPT_MODELS_FILE ]]; then
-  source "$CCP_GPT_MODELS_FILE"
-else
-  print -u2 -- "[ccp] GPT 版本表讀不到：$CCP_GPT_MODELS_FILE（ccp-gpt 系列會沒有型號）"
-fi
+
+_ccp_refresh_gpt_models() {
+  [[ "${_CCP_GPT_REFRESHED:-0}" == 1 ]] && return 0
+  local assignments
+  if ! assignments=$(
+    unset GPT_ASTRA GPT_SOL GPT_LUNA GPT_WEB_SOL GPT_WEB_PRO
+    source "$CCP_GPT_MODELS_FILE" >/dev/null || exit 1
+    [[ -n "${GPT_ASTRA-}" && -n "${GPT_SOL-}" && -n "${GPT_LUNA-}" ]] || exit 1
+    local key
+    for key in GPT_ASTRA GPT_SOL GPT_LUNA GPT_WEB_SOL GPT_WEB_PRO; do
+      if (( ${+parameters[$key]} )); then
+        print -r -- "$key=${(qqq)${(P)key}}"
+      fi
+    done
+  ); then
+    print -ru2 -- "[ccp] GPT 版本表未知：$CCP_GPT_MODELS_FILE（無法讀取、解析或不完整）；保留原啟動設定。"
+    return 1
+  fi
+  eval "$assignments"
+}
+
+_ccp_refresh_gpt_models || true
 
 _ccp_effort_for_model() {
   case "$1" in
@@ -66,14 +101,14 @@ _ccp_gpt_label() {
 # ===== DeepSeek V4-Pro =====
 # Source: https://api-docs.deepseek.com/zh-cn/quick_start/agent_integrations/claude_code
 ccp-deepseek() {
-  if [[ -z "$DEEPSEEK_API_KEY" ]]; then
+  if ! _ccp_model_map_preview && [[ -z "$DEEPSEEK_API_KEY" ]]; then
     echo "ccp-deepseek: DEEPSEEK_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
 
   # Health check: ensure proxy daemon is up (rewrites tool_choice for caveat 9 fix).
   # If not listening, kickstart via launchd and wait up to 5s for ready.
-  if ! /usr/bin/nc -z 127.0.0.1 9091 2>/dev/null; then
+  if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 9091 2>/dev/null; then
     echo "[ccp-deepseek] proxy not listening, kickstarting launchd service..." >&2
     launchctl kickstart "gui/$UID/com.gggodlin.cc-vendor-bridge-proxy" 2>/dev/null
     local i=0
@@ -329,7 +364,11 @@ ccp-mimo-payg() {
 #   ANTHROPIC_MODEL=gpt-5.6-terra ccp-bruce        # different main model
 #   CCP_BRUCE_EFFORT=max ccp-bruce                 # deeper reasoning, costs more output
 ccp-bruce() {
-  if [[ -z "$BRUCE_API_KEY" ]]; then
+  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
+    return 1
+  fi
+  local _CCP_GPT_REFRESHED=1
+  if ! _ccp_model_map_preview && [[ -z "$BRUCE_API_KEY" ]]; then
     echo "ccp-bruce: BRUCE_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
@@ -768,12 +807,16 @@ except Exception:
 #   ANTHROPIC_MODEL='gpt-5.5(high)' ccp-relay          # effort suffix works
 #   ANTHROPIC_MODEL=ds-flash ccp-relay -p "cheap task" # free pool
 ccp-relay() {
-  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
+    return 1
+  fi
+  local _CCP_GPT_REFRESHED=1
+  if ! _ccp_model_map_preview && [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
     echo "ccp-relay: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
     return 1
   fi
   # Health check: relay is a launchd KeepAlive service on 8317; kickstart if down.
-  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+  if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
     echo "[ccp-relay] relay not listening, kickstarting launchd service..." >&2
     launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
     local i=0
@@ -787,7 +830,7 @@ ccp-relay() {
     fi
   fi
   (
-    source ~/.cli-proxy-api/keys.env
+    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
     unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
     export CC_VENDOR=relay
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
@@ -1008,11 +1051,15 @@ ccp-gpt-relogin() {
 }
 
 ccp-gpt() {
-  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
+    return 1
+  fi
+  local _CCP_GPT_REFRESHED=1
+  if ! _ccp_model_map_preview && [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
     echo "ccp-gpt: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
     return 1
   fi
-  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+  if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
     echo "[ccp-gpt] relay not listening, kickstarting launchd service..." >&2
     launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
     local i=0
@@ -1025,9 +1072,9 @@ ccp-gpt() {
       return 1
     fi
   fi
-  ccp-gpt-whoami
+  _ccp_model_map_preview || ccp-gpt-whoami
   (
-    source ~/.cli-proxy-api/keys.env
+    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
     unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
     export CC_VENDOR=gpt
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
@@ -1140,6 +1187,10 @@ ccp-gpt() {
 }
 
 ccp-gpt-fast() {
+  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
+    return 1
+  fi
+  local _CCP_GPT_REFRESHED=1
   (
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_ASTRA}"
     if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
@@ -1152,6 +1203,10 @@ ccp-gpt-fast() {
 }
 
 ccp-gpt-smart() {
+  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
+    return 1
+  fi
+  local _CCP_GPT_REFRESHED=1
   (
     local custom_headers
     custom_headers="$(print -r -- "${ANTHROPIC_CUSTOM_HEADERS:-}" | /usr/bin/grep -vFx -- 'X-CCP-Fast: 1')"
@@ -1176,6 +1231,10 @@ ccp-gpt-smart() {
 # Astra promotion, so they are deliberately absent here.
 # For the Sol fast tier: ANTHROPIC_DEFAULT_OPUS_MODEL=$GPT_SOL ccp-gpt-fast
 ccp-sol() {
+  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
+    return 1
+  fi
+  local _CCP_GPT_REFRESHED=1
   (
     ANTHROPIC_MODEL=$GPT_SOL \
     ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_SOL \
@@ -1213,12 +1272,13 @@ ccp-sol() {
 # Gemini model hangs off a single OAuth account (unlike ccp-gpt's two Codex
 # accounts), so surface which one is carrying the session before launch.
 _ccp-gemini-preflight() {
+  _ccp_model_map_preview && return 0
   local caller=$1
-  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+  if ! _ccp_model_map_preview && [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
     echo "$caller: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
     return 1
   fi
-  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+  if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
     echo "[$caller] relay not listening, kickstarting launchd service..." >&2
     launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
     local i=0
@@ -1257,7 +1317,7 @@ _ccp-gemini-preflight() {
 ccp-gemini-pro() {
   _ccp-gemini-preflight ccp-gemini-pro || return 1
   (
-    source ~/.cli-proxy-api/keys.env
+    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
     unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
     export CC_VENDOR=gemini-pro
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
@@ -1290,7 +1350,7 @@ ccp-gemini-pro() {
 ccp-gemini-flash() {
   _ccp-gemini-preflight ccp-gemini-flash || return 1
   (
-    source ~/.cli-proxy-api/keys.env
+    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
     unset ANTHROPIC_API_KEY
     export CC_VENDOR=gemini-flash
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
@@ -1791,12 +1851,12 @@ ccp-free() {
   local claude_bin="${CCP_FREE_CLAUDE_BIN:-${CC_CLAUDE_BIN:-claude}}"
   local relay_service='com.philip.cli-proxy-api'
 
-  if [[ ! -f "$keys_file" ]]; then
+  if ! _ccp_model_map_preview && [[ ! -f "$keys_file" ]]; then
     print -P "%F{red}[ccp-free] keys file is missing: $keys_file%f" >&2
     return 1
   fi
 
-  if ! "$nc_bin" -z 127.0.0.1 8317 2>/dev/null; then
+  if ! _ccp_model_map_preview && ! "$nc_bin" -z 127.0.0.1 8317 2>/dev/null; then
     echo "[ccp-free] relay not listening, kickstarting launchd service..." >&2
     "$launchctl_bin" kickstart "gui/$UID/$relay_service" >/dev/null 2>&1
     local i=0
@@ -1811,12 +1871,12 @@ ccp-free() {
     fi
   fi
   (
-    source "$keys_file"
-    if [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
+    _ccp_model_map_preview || source "$keys_file"
+    if ! _ccp_model_map_preview && [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
       print -P "%F{red}[ccp-free] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
       exit 1
     fi
-    ccp-free-whoami ccp-free
+    _ccp_model_map_preview || ccp-free-whoami ccp-free
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
     export CC_VENDOR=free
     export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
@@ -1865,11 +1925,15 @@ ccp-free() {
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-480000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    command "$claude_bin" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    _ccp_run_claude "$claude_bin" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
   )
 }
 
 ccp-mix-gpt() {
+  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
+    return 1
+  fi
+  local _CCP_GPT_REFRESHED=1
   local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
   local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
   local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
@@ -1877,12 +1941,12 @@ ccp-mix-gpt() {
   local claude_bin="${CCP_FREE_CLAUDE_BIN:-${CC_CLAUDE_BIN:-claude}}"
   local relay_service='com.philip.cli-proxy-api'
 
-  if [[ ! -f "$keys_file" ]]; then
+  if ! _ccp_model_map_preview && [[ ! -f "$keys_file" ]]; then
     print -P "%F{red}[ccp-mix-gpt] keys file is missing: $keys_file%f" >&2
     return 1
   fi
 
-  if ! "$nc_bin" -z 127.0.0.1 8317 2>/dev/null; then
+  if ! _ccp_model_map_preview && ! "$nc_bin" -z 127.0.0.1 8317 2>/dev/null; then
     echo "[ccp-mix-gpt] relay not listening, kickstarting launchd service..." >&2
     "$launchctl_bin" kickstart "gui/$UID/$relay_service" >/dev/null 2>&1
     local i=0
@@ -1897,8 +1961,8 @@ ccp-mix-gpt() {
     fi
   fi
   (
-    source "$keys_file"
-    if [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
+    _ccp_model_map_preview || source "$keys_file"
+    if ! _ccp_model_map_preview && [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
       print -P "%F{red}[ccp-mix-gpt] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
       exit 1
     fi
@@ -1920,7 +1984,7 @@ ccp-mix-gpt() {
     local fable_base="${fable_model%\[1m\]}"
     [[ "$fable_base" == ($GPT_ASTRA|$GPT_SOL|$GPT_LUNA) ]] && fable_model="${fable_base}[1m]"
     print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
-    ccp-free-whoami ccp-mix-gpt
+    _ccp_model_map_preview || ccp-free-whoami ccp-mix-gpt
     unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
     if [[ "$main_model" == *[Gg][Pp][Tt]* ]]; then
       export CC_VENDOR=mix-gpt
@@ -1946,7 +2010,7 @@ ccp-mix-gpt() {
     main_effort=$(_ccp_effort_for_model "$ANTHROPIC_MODEL")
     local -a effort_args=()
     [[ -n "$main_effort" ]] && effort_args=(--effort "$main_effort")
-    command "$claude_bin" "${effort_args[@]}" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    _ccp_run_claude "$claude_bin" "${effort_args[@]}" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
   )
 }
 
@@ -1957,6 +2021,10 @@ ccp-mix-gpt() {
 # Sits next to ccp-sol for the same reason: astra per-token is sol's 2.5x, so
 # the cheapest subscription-billed brain that still reads as GPT wins the seat.
 ccp-mix-sol() {
+  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
+    return 1
+  fi
+  local _CCP_GPT_REFRESHED=1
   (
     ANTHROPIC_MODEL=$GPT_SOL \
     ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_SOL \
@@ -1966,90 +2034,7 @@ ccp-mix-sol() {
 
 # ===== Helper: list available functions =====
 ccp-list() {
-  cat <<EOF
-Available cc-vendor-bridge functions:
-
-  ccp-deepseek      → DeepSeek V4-Pro / V4-Flash
-  ccp-deepseek-flash → DeepSeek V4-Flash (all model slots forced)
-  ccp-deepseek-pro   → DeepSeek V4-Pro (all model slots forced)
-  ccp-glm           → Zhipu GLM-5.1 / 4.7-Flash (z.ai intl)
-  ccp-mimo          → Xiaomi MiMo V2.5-Pro Token Plan (Singapore subscription)
-  ccp-mimo-payg     → Xiaomi MiMo V2.5-Pro (intl PAYG)
-  ccp-bruce         → BRUCEAI gateway api.bruceai.net, prepaid credits, GPT slot mapping
-                      (OPUS+FABLE→sol / SONNET+HAIKU→luna, --effort high, 272K window)
-                      Context pinned at the 272K billing cliff: past it the whole request
-                      is rebilled at 2x input / 1.5x output. Override: ANTHROPIC_MODEL=... /
-                      CCP_BRUCE_EFFORT=max
-  ccp-local         → Rapid-MLX local (auto-detect model via /v1/models on :8002, Apple Silicon, zero cost)
-                      Override: LOCAL_MODEL=... / RAPID_MLX_LOCAL_URL=...
-                      Needs vllm_mlx tool-content-flatten patch for Qwen3.6 strict template (see local-model-bench FINDINGS §8.6)
-  ccp-free          → CLIProxyAPI free(max) / free-smart(max) chains (:8317; owners and priority read from relay config)
-  ccp-relay         → CLIProxyAPI self-hosted relay :8317 (default GPT Sol tier via Codex OAuth;
-                      HAIKU slot→ds-flash free pool; claude-sonnet-4-6 / gemini-pro-agent via Antigravity)
-                      Override: ANTHROPIC_MODEL=<any relay model> ccp-relay; WebSearch disabled until probed
-  ccp-gpt           → CLIProxyAPI relay, cross-gen slot mapping (FABLE→astra / OPUS+SONNET+HAIKU→luna(max),
-                      Astra effort medium / Luna effort pinned by suffix / subagent routing preserved), Tibo-recipe env vars (effort on,
-                      concurrency 3, 1M context, tool search off)
-  ccp-mix-gpt       → Mixed-tier mapping: FABLE+main→$GPT_ASTRA (medium), OPUS/SONNET/HAIKU+subagents→free(max)
-                      (= same relay-managed free chain as ccp-free, :8317)
-                      GPT main 1M window compacting at 900K, free fleet at 480K
-  ccp-mix-sol       → ccp-mix-gpt with the flagship seats on $GPT_SOL
-                      (FABLE+main→sol at xhigh, fleet slots stay on free(max))
-  ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to $GPT_ASTRA;
-                      priority service tier for all Codex requests
-  ccp-gpt-smart     → All model slots forced to $GPT_ASTRA on the Standard service tier
-  ccp-sol           → Sol tier: ccp-gpt routing with FABLE+main on $GPT_SOL
-                      at xhigh and the picker option on sol-fast (fleet slots unchanged)
-  ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
-                      (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
-  ccp-gpt-relogin   → Re-auth a Codex account AND restore the priority that --codex-login
-                      strips (upstream PR #3843, unmerged). Use instead of raw --codex-login.
-  ccp-relay-priority-snapshot / -apply
-                    → The snapshot/restore halves, usable standalone if priority went missing
-  /model picker      → Choose GPT-6 Astra Fast and press s for this session only; routed subagents stay Standard
-
-  ccp-gemini-pro    → CLIProxyAPI relay, Gemini 3.1 Pro High via Antigravity OAuth
-                      (OPUS/FABLE→gemini-pro-agent(high) / SONNET→gemini-pro-agent /
-                      HAIKU→gemini-3.5-flash-low), 1,048,576 context, thinking on
-  ccp-gemini-flash  → Same relay and 1M context, all slots on Gemini 3.7 Flash;
-                      thinking off by default, /model picker offers the thinking variant
-                      Effort: use the model-name suffix, NOT CC's effort picker —
-                      ANTHROPIC_MODEL='gemini-pro-agent(xhigh)' ccp-gemini-pro
-                      (CC's output_config.effort is stripped by the relay for Gemini)
-
-  ccp-resume        → 互動 picker 選 prior session resume，自動 dispatch 對應 vendor
-                      (workaround caveat 11: 跨 vendor resume 會炸 thinking signature)
-
-  ccp-bruce-status  → Bruce snapshot：預付額度餘額 (/v1/usage) + service stability
-                      額度換算 21 credits = US\$1；(--json 印合併原始)
-                      ⚠️ 舊的 /v1/usage/quota 已壞（空 body / 500），已改讀 /v1/usage
-  ccp-bruce-watch   → Bruce 長期守護 watcher (serviceStabilityPercent 單 metric threshold
-                      觸發，jsonl log 落檔，macOS notification)
-                      ⚠️ healthPercent 2026-08-17 起恆為 0、gate 已預設關閉；
-                      要重啟用：--critical-below 20 之類明確給值
-
-Disabled (API key not configured):
-  ccp-kimi / ccp-kimi-cn / ccp-glm-cn / ccp-qwen / ccp-qwen-coding
-
-Codex side (OpenAI Responses path, runs codex CLI not claude):
-  codex-bruce       → codex CLI through Bruce (per-invocation -c override)
-                      Default codex provider stays openai (ChatGPT OAuth) — only
-                      this wrapper routes to bruce; plugin /codex:review unaffected.
-                      Examples:
-                        codex-bruce review --base main      (native review via bruce)
-                        codex-bruce exec "<task>"
-                        codex-bruce                          (interactive)
-
-Each ccp-* opens a Claude Code session backed by that vendor.
-Pass any args you'd pass to 'claude' (e.g. '-c', '/path/to/proj').
-
-Per-call env override (use \${VAR:-default} pattern):
-  ANTHROPIC_MODEL=deepseek-v4-flash ccp-deepseek -p "task"
-  CLAUDE_CODE_EFFORT_LEVEL=low ccp-deepseek
-  CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-pro ccp-deepseek
-
-To switch mid-conversation: Ctrl-D to exit, then run a different ccp-* function.
-EOF
+  CCP_GPT_MODELS_FILE="$CCP_GPT_MODELS_FILE" python3 "${CCP_MODEL_MAP_BIN:-${_CC_VENDOR_BRIDGE_DIR}/bin/ccp-model-map}" "$@"
 }
 
 # ===== Helper: resume any prior CC session, auto-dispatch by vendor =====
