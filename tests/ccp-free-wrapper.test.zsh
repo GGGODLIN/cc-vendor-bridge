@@ -939,7 +939,7 @@ assert_status 'mix-sol wrapper returns success' 0
 assert_output_contains 'mix-sol wrapper reports Sol main route' "[ccp-mix-gpt] Main：$(_ccp_gpt_label "$GPT_SOL")"
 assert_file_line 'mix-sol pins main to sol with a 1M window' "$FIXTURE/capture.log" "model=$SOL_1M"
 assert_file_line 'mix-sol pins Sol effort flag' "$FIXTURE/capture.log" 'arg1=--effort'
-assert_file_line 'mix-sol pins Sol to xhigh' "$FIXTURE/capture.log" 'arg2=xhigh'
+assert_file_line 'mix-sol pins Sol to its table effort' "$FIXTURE/capture.log" "arg2=$(_ccp_effort_for_model "$GPT_SOL")"
 assert_file_line 'mix-sol keeps model flag after effort' "$FIXTURE/capture.log" 'arg3=--model'
 assert_file_line 'mix-sol passes Sol after model flag' "$FIXTURE/capture.log" "arg4=$SOL_1M"
 assert_file_line 'mix-sol pins FABLE to sol' "$FIXTURE/capture.log" "fable_model=$SOL_1M"

@@ -53,7 +53,10 @@ fi
 _ccp_effort_for_model() {
   case "$1" in
     ${GPT_ASTRA}*) print -r -- medium ;;
-    ${GPT_SOL}*|gpt-5.6-sol*) print -r -- xhigh ;;
+    # 5.6 keeps xhigh so rolling GPT_SOL back restores the old behavior. 6.1 peaks at high:
+    # OpenAI's DeepSWE chart has it at 75.2% on high vs 71.9% on both xhigh and max.
+    gpt-5.6-sol*) print -r -- xhigh ;;
+    ${GPT_SOL}*) print -r -- high ;;
     *) print -r -- "" ;;
   esac
 }
@@ -363,7 +366,7 @@ ccp-bruce() {
     # slot mapping do the routing, so ~/.claude/agents/routed-*.md land where the policy
     # says (routed-impl/judge/secure = opus → sol, routed-mech = sonnet → luna).
     # Effort is a real knob here — same reasoning prompt ran 9.2s/384 tokens at low
-    # versus 20.5s/1042 at max. ccp-gpt pins xhigh for Sol because Codex OAuth is a subscription;
+    # versus 20.5s/1042 at max. ccp-gpt pins Sol high-or-above because Codex OAuth is a subscription;
     # Bruce bills per token, so max costs ~2.7x the output. high is the default trade.
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
     # Context: the hard ceiling probed between 824,850 (accepted) and ~900,000
@@ -1994,12 +1997,12 @@ Available cc-vendor-bridge functions:
                       (= same relay-managed free chain as ccp-free, :8317)
                       GPT main 1M window compacting at 900K, free fleet at 480K
   ccp-mix-sol       → ccp-mix-gpt with the flagship seats on $GPT_SOL
-                      (FABLE+main→sol at xhigh, fleet slots stay on free(max))
+                      (FABLE+main→sol at high, fleet slots stay on free(max))
   ccp-gpt-fast      → Same routing and context as ccp-gpt, except Opus defaults to $GPT_ASTRA;
                       priority service tier for all Codex requests
   ccp-gpt-smart     → All model slots forced to $GPT_ASTRA on the Standard service tier
   ccp-sol           → Sol tier: ccp-gpt routing with FABLE+main on $GPT_SOL
-                      at xhigh and the picker option on sol-fast (fleet slots unchanged)
+                      at high and the picker option on sol-fast (fleet slots unchanged)
   ccp-gpt-whoami    → Which Codex account actually serves ccp-gpt + which ones are dead
                       (runs automatically as a ccp-gpt pre-flight; call standalone to re-check)
   ccp-gpt-relogin   → Re-auth a Codex account AND restore the priority that --codex-login

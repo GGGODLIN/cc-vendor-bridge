@@ -80,6 +80,21 @@ assert_eq \
   "$(_ccp_effort_for_model gpt-5.6-sol-fast)"
 
 assert_eq \
+  "shared effort helper maps Sol 6.1 to high" \
+  "high" \
+  "$(GPT_SOL=gpt-6.1-sol _ccp_effort_for_model gpt-6.1-sol)"
+
+assert_eq \
+  "shared effort helper maps Sol 6.1 Fast to high" \
+  "high" \
+  "$(GPT_SOL=gpt-6.1-sol _ccp_effort_for_model gpt-6.1-sol-fast)"
+
+assert_eq \
+  "shared effort helper keeps xhigh when GPT_SOL rolls back to 5.6" \
+  "xhigh" \
+  "$(GPT_SOL=gpt-5.6-sol _ccp_effort_for_model gpt-5.6-sol)"
+
+assert_eq \
   "shared effort helper leaves other models unmapped" \
   "" \
   "$(_ccp_effort_for_model ds-free)"
