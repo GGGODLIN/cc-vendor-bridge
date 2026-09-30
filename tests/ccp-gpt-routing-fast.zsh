@@ -127,9 +127,9 @@ assert_eq \
   "$GPT_ASTRA|$GPT_SOL|$GPT_LUNA"
 
 assert_contains \
-  "ccp-gpt maps Opus to Luna at max effort" \
+  "ccp-gpt maps Opus to Sol" \
   "${functions[ccp-gpt]}" \
-  'ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-${GPT_LUNA}(max)}"'
+  'ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_SOL}"'
 
 assert_contains \
   "ccp-gpt keeps Sonnet on Luna at max effort" \
@@ -175,25 +175,15 @@ assert_contains \
 
 if (( ${+functions[ccp-gpt-fast]} )); then
   ccp-gpt() {
-    print -r -- "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}|${ANTHROPIC_CUSTOM_HEADERS:-}"
+    print -r -- "$*|${ANTHROPIC_DEFAULT_OPUS_MODEL:-}|${ANTHROPIC_CUSTOM_HEADERS:-}"
   }
 
   unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_CUSTOM_HEADERS
 
   assert_eq \
-    "ccp-gpt-fast maps Opus to Astra and adds the opt-in header" \
-    "gpt-6-astra|X-CCP-Fast: 1" \
-    "$(ccp-gpt-fast)"
-
-  assert_eq \
-    "ccp-gpt-fast preserves an explicit Opus override" \
-    "gpt-5.6-luna(max)|X-CCP-Fast: 1" \
-    "$(ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-5.6-luna(max)' ccp-gpt-fast)"
-
-  assert_eq \
-    "ccp-gpt-fast preserves existing custom headers" \
-    $'gpt-6-astra|X-Existing: yes\nX-CCP-Fast: 1' \
-    "$(ANTHROPIC_CUSTOM_HEADERS='X-Existing: yes' ccp-gpt-fast)"
+    "ccp-gpt-fast is ccp-gpt with the --fast flag and no slot overrides" \
+    "--fast --resume fixture||" \
+    "$(ccp-gpt-fast --resume fixture)"
 else
   print -ru2 -- "not ok - ccp-gpt-fast exists"
   (( failures++ ))

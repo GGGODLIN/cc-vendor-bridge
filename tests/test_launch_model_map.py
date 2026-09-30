@@ -30,7 +30,7 @@ class LaunchModelMapTest(unittest.TestCase):
     fake_cc.write_text("""#!/usr/bin/env python3
 import json,os,sys
 keys=['ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_FABLE_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','CLAUDE_CODE_SUBAGENT_MODEL']
-record={'slots':[os.environ.get(k,'') for k in keys],'argv':sys.argv[1:],'fast':'X-CCP-Fast: 1' in os.environ.get('ANTHROPIC_CUSTOM_HEADERS','')}
+record={'slots':[os.environ.get(k,'') for k in keys],'argv':sys.argv[1:],'fast':'X-CCP-Fast: 1' in os.environ.get('ANTHROPIC_CUSTOM_HEADERS',''),'headers':os.environ.get('ANTHROPIC_CUSTOM_HEADERS','')}
 with open(os.environ['CC_RECORDS'],'a') as f:f.write(json.dumps(record)+'\\n')
 print('CC-STDOUT-UNCHANGED')
 """)
@@ -199,10 +199,35 @@ function launchctl {{ printf 'UNEXPECTED-SERVICE-START\\n' >&2; return 42; }}
     self.assertEqual(status, 0, output)
     record = self.read_records()[0]
     self.assertTrue(record["fast"])
-    self.assertEqual(record["slots"][2], "gpt-test-astra")
+    self.assertEqual(record["slots"][:3], ["gpt-test-astra", "gpt-test-astra", "gpt-test-sol"])
+    self.assertEqual(record["argv"][-2:], ["--resume", "fixture-session"])
+    self.assertNotIn("--fast", record["argv"])
     status, output, _ = self.launch("ccp-glm")
     self.assertEqual(status, 0, output)
     self.assertNotIn("CC 模型映射", output)
+
+  def test_fast_flag_is_consumed_and_adds_priority_header(self):
+    for entry, flag, main in (("ccp-sol", "--fast", "gpt-test-sol"), ("ccp-gpt", "-fast", "gpt-test-astra")):
+      with self.subTest(entry=entry, flag=flag):
+        self.records.unlink(missing_ok=True)
+        env = self.env | {"ANTHROPIC_CUSTOM_HEADERS": "X-Existing: yes"}
+        status, output, _ = self.launch(entry, [flag, "--resume", "fixture-session"], env=env)
+        self.assertEqual(status, 0, output)
+        record = self.read_records()[0]
+        self.assertEqual(record["headers"], "X-Existing: yes\nX-CCP-Fast: 1")
+        self.assertEqual(record["slots"][:3], [main, main, "gpt-test-sol"])
+        self.assertEqual(record["argv"][-2:], ["--resume", "fixture-session"])
+        self.assertNotIn(flag, record["argv"])
+
+  def test_opus_maps_to_sol_without_fast_by_default(self):
+    for entry in ("ccp-gpt", "ccp-sol"):
+      with self.subTest(entry=entry):
+        self.records.unlink(missing_ok=True)
+        status, output, _ = self.launch(entry)
+        self.assertEqual(status, 0, output)
+        record = self.read_records()[0]
+        self.assertFalse(record["fast"])
+        self.assertEqual(record["slots"][2:5], ["gpt-test-sol", "gpt-test-luna(max)", "gpt-test-luna(max)"])
 
   def test_narrow_terminal_preserves_complete_launcher_names(self):
     env = self.env | {"COLUMNS": "80"}

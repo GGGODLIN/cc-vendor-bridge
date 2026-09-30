@@ -858,7 +858,9 @@ ccp-relay() {
 # Recipe from OpenAI Codex lead Tibo Sottiaux (x.com/thsottiaux/status/2076119366647894371,
 # 2026-07-12) plus community fixes from the same thread. Tier mapping per OpenAI's
 # official positioning (Astra=flagship, Luna=fast/cheap):
-#   FABLE→$GPT_ASTRA  OPUS/SONNET/HAIKU→${GPT_LUNA}(max)
+#   FABLE→$GPT_ASTRA  OPUS→$GPT_SOL  SONNET/HAIKU→${GPT_LUNA}(max)
+# Opus moved Luna→Sol on 2026-09-30: Sol is capable enough for judge-class agents
+# and still bills well under Astra.
 # Terra dropped from the mapping 2026-08-17 (only the flagship and Luna justify their price).
 # Flagship seat moved 5.6-Sol→6-Astra on 2026-09-05; the cheap subagent fleet stays on
 # Luna deliberately — Astra bills 2.5x Sol, so promoting the fleet would multiply the
@@ -1054,6 +1056,13 @@ ccp-gpt-relogin() {
 }
 
 ccp-gpt() {
+  local _ccp_fast=0
+  # Only a leading flag counts, so a prompt or option value that reads "--fast"
+  # still reaches claude untouched; claude itself has no flag by that name.
+  if [[ ${1:-} == --fast || ${1:-} == -fast ]]; then
+    _ccp_fast=1
+    shift
+  fi
   if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
     return 1
   fi
@@ -1084,8 +1093,17 @@ ccp-gpt() {
     export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
     export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-$GPT_ASTRA}
     export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_ASTRA}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-${GPT_LUNA}(max)}"
-    # OPUS/SONNET/HAIKU land on Luna at pinned max effort. Terra is retired
+    # No effort suffix on Opus: judge-class agents pin their own effort, and a
+    # suffix would override it at the relay.
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_SOL}"
+    if (( _ccp_fast )); then
+      if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
+        export ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS}"$'\n'"X-CCP-Fast: 1"
+      else
+        export ANTHROPIC_CUSTOM_HEADERS="X-CCP-Fast: 1"
+      fi
+    fi
+    # SONNET/HAIKU land on Luna at pinned max effort. Terra is retired
     # from the mapping: in practice only Sol and Luna earn their price, and Terra sat in
     # the middle being neither. The `(model)(effort)` suffix is parsed by the relay and
     # overrides whatever effort CC sends — verified by request-log A/B: CC sent
@@ -1190,19 +1208,7 @@ ccp-gpt() {
 }
 
 ccp-gpt-fast() {
-  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
-    return 1
-  fi
-  local _CCP_GPT_REFRESHED=1
-  (
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_ASTRA}"
-    if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
-      export ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS}"$'\n'"X-CCP-Fast: 1"
-    else
-      export ANTHROPIC_CUSTOM_HEADERS="X-CCP-Fast: 1"
-    fi
-    ccp-gpt "$@"
-  )
+  ccp-gpt --fast "$@"
 }
 
 ccp-gpt-smart() {
@@ -1230,9 +1236,9 @@ ccp-gpt-smart() {
 
 # Put the Sol tier (the pre-Astra flagship tier) on the flagship seats without
 # editing ccp-gpt. Every slot in ccp-gpt reads ${VAR:-default}, so presetting them
-# here is enough — same delegation pattern as ccp-gpt-smart. The fleet slots (OPUS/SONNET/HAIKU→luna) never moved during the
-# Astra promotion, so they are deliberately absent here.
-# For the Sol fast tier: ANTHROPIC_DEFAULT_OPUS_MODEL=$GPT_SOL ccp-gpt-fast
+# here is enough — same delegation pattern as ccp-gpt-smart. Opus/Sonnet/Haiku follow
+# ccp-gpt's defaults, so they are deliberately absent here.
+# For the Sol fast tier: ccp-sol --fast
 ccp-sol() {
   if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
     return 1
