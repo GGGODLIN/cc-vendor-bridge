@@ -1277,11 +1277,11 @@ ccp-sol() {
 _ccp-gemini-preflight() {
   _ccp_model_map_preview && return 0
   local caller=$1
-  if ! _ccp_model_map_preview && [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
     echo "$caller: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
     return 1
   fi
-  if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
     echo "[$caller] relay not listening, kickstarting launchd service..." >&2
     launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
     local i=0
