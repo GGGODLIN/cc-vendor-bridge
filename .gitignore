@@ -21,3 +21,6 @@ Thumbs.db
 tests/output/
 tests/*.log
 docs/philip/
+
+# Python bytecode cache
+__pycache__/
