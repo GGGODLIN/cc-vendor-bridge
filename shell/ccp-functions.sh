@@ -1441,9 +1441,10 @@ ccp-grok() {
     export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-grok-4.7}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-grok-4.7}"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-grok-4.7}"
-    # HAIKU slot → free pool, same as ccp-relay: background summarisation should not
-    # spend the Heavy weekly pool.
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-ds-flash}"
+    # HAIKU slot → free chain, same spelling as ccp-free / ccp-mix-*: background
+    # summarisation should not spend the Heavy weekly pool. The chain's third leg is
+    # grok47-free, so Heavy is only touched once the two legs above it fail.
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-free(max)}"
     export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-grok-4.7-build-fast}"
     export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Grok 4.7 Fast}"
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Same model, 2x weekly quota per token}"
