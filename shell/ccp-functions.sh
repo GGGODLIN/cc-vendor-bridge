@@ -800,60 +800,6 @@ except Exception:
 #   )
 # }
 
-# ===== CLIProxyAPI self-hosted relay (subscription-to-API hub) =====
-# Backend: ~/Desktop/projects/cliproxyapi-setup (management handbook in its CLAUDE.md).
-# Serves Codex OAuth (gpt-5.5/5.4), Antigravity OAuth (claude-opus-4-6-thinking /
-# claude-sonnet-4-6 / gemini-pro-agent=3.1-Pro-High / nano-banana-2 image), and the
-# free pool (ds-flash = Zen-priority + NVIDIA-fallback cross-provider alias).
-# Per-call override:
-#   ANTHROPIC_MODEL=claude-sonnet-4-6 ccp-relay        # Antigravity Claude
-#   ANTHROPIC_MODEL='gpt-5.5(high)' ccp-relay          # effort suffix works
-#   ANTHROPIC_MODEL=ds-flash ccp-relay -p "cheap task" # free pool
-ccp-relay() {
-  if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
-    return 1
-  fi
-  local _CCP_GPT_REFRESHED=1
-  if ! _ccp_model_map_preview && [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
-    echo "ccp-relay: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
-    return 1
-  fi
-  # Health check: relay is a launchd KeepAlive service on 8317; kickstart if down.
-  if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
-    echo "[ccp-relay] relay not listening, kickstarting launchd service..." >&2
-    launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
-    local i=0
-    while (( i < 50 )); do
-      /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null && break
-      sleep 0.1; ((i++))
-    done
-    if (( i >= 50 )); then
-      print -P "%F{red}[ccp-relay] relay did not become ready in 5s — check ~/.cli-proxy-api/logs/%f" >&2
-      return 1
-    fi
-  fi
-  (
-    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
-    export CC_VENDOR=relay
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-$GPT_SOL}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_SOL}
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$GPT_SOL}
-    # HAIKU slot → free pool: background/summarization traffic costs nothing.
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-ds-flash}
-    export CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_CODE_SUBAGENT_MODEL:-$GPT_SOL}
-    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    # --disallowed-tools WebSearch — untested how CLIProxyAPI translates the
-    # web_search_20250305 server-tool schema to Codex/Antigravity upstreams
-    # (glm rejects with 400, bruce silently fabricates — see docs/caveats.md §13b).
-    # Keep disabled until probed; remove after a verified pass.
-    _cc_vendor_claude --disallowed-tools WebSearch "$@"
-  )
-}
-
 # ===== CLIProxyAPI relay, all-GPT slot mapping (cross-generation) =====
 # Recipe from OpenAI Codex lead Tibo Sottiaux (x.com/thsottiaux/status/2076119366647894371,
 # 2026-07-12) plus community fixes from the same thread. Tier mapping per OpenAI's
@@ -1173,7 +1119,7 @@ ccp-gpt() {
     # clause is load-bearing, not decorative: in a probe that explicitly ordered the
     # main session NOT to pass the rules along, it pasted all 434 characters into the
     # subagent prompt anyway.
-    # WebSearch: same unprobed relay translation path as ccp-relay (docs/caveats.md §13b).
+    # WebSearch: relay translation of the web_search server tool is unprobed (docs/caveats.md §13b).
     # Skill(claude-api): unblocked 2026-08-25 (trial claude-api-skill-unblock, review
     # 2026-09-01). The 2026-07-14 "Prompt is too long" (session c83482eb) came from an
     # older CC that injected ~800KB in one shot; CC 2.1.243 loads it progressively and a
@@ -1347,7 +1293,7 @@ ccp-gemini-pro() {
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    # WebSearch: same unprobed relay translation path as ccp-relay / ccp-gpt
+    # WebSearch: same unprobed relay translation path as ccp-gpt
     # (docs/caveats.md §13b). Unlike ccp-gpt, Skill(claude-api) stays allowed —
     # its ~200k-token injection fits the 1M window.
     _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
@@ -1454,7 +1400,7 @@ ccp-grok() {
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-476000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    # WebSearch: same unprobed relay translation path as ccp-relay / ccp-gpt
+    # WebSearch: same unprobed relay translation path as ccp-gpt
     # (docs/caveats.md §13b).
     _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
   )

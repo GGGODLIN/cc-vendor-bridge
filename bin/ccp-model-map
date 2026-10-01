@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRIES = (
   "cc-luna", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
   "ccp-mix-gpt", "ccp-mix-sol", "ccp-free", "ccp-gemini-pro", "ccp-gemini-flash", "ccp-grok",
-  "ccp-relay", "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
+  "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
 )
 SLOTS = (
   "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -202,7 +202,7 @@ def render(active=None, launch=False, cli_args=()):
     if entry in ("cc-luna", "cc-free"):
       slots[1:3] = [slots[1] or "原生 Fable", slots[2] or "原生 Opus"]
     shown = [value or "未另設" for value in slots[:5]]
-    if version_error and entry in ("ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast", "ccp-mix-gpt", "ccp-mix-sol", "ccp-relay", "ccp-bruce", "cc-luna"):
+    if version_error and entry in ("ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast", "ccp-mix-gpt", "ccp-mix-sol", "ccp-bruce", "cc-luna"):
       shown = [UNKNOWN] * 5
     label = entry
     if entry == active:

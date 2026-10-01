@@ -13,7 +13,7 @@ SOURCE = ROOT / "shell" / "ccp-functions.sh"
 ENTRIES = (
   "cc-luna", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
   "ccp-mix-gpt", "ccp-mix-sol", "ccp-free", "ccp-gemini-pro", "ccp-gemini-flash", "ccp-grok",
-  "ccp-relay", "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
+  "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
 )
 VERSIONS = "GPT_ASTRA=gpt-test-astra\nGPT_SOL=gpt-test-sol\nGPT_LUNA=gpt-test-luna\n"
 RELAY = """openai-compatibility:
