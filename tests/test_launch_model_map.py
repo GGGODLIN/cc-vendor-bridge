@@ -23,6 +23,7 @@ class LaunchModelMapTest(unittest.TestCase):
     (auth / "keys.env").write_text("CLIPROXY_BASE_URL=http://127.0.0.1:8317\nCLIPROXY_KEY_CC=AUTH-CREDENTIAL-CANARY\nCLIPROXY_MGMT_KEY=MGMT-CREDENTIAL-CANARY\n")
     (auth / "antigravity-test.json").write_text('{"email":"fixture@example.test","disabled":false,"expired":"fixture"}')
     (auth / "codex-test.json").write_text('{"email":"fixture@example.test","priority":1}')
+    (auth / "xai-test.json").write_text('{"email":"fixture@example.test","disabled":false}')
     self.records = self.fixture / "cc-records.jsonl"
     binary = self.fixture / "bin"
     binary.mkdir()

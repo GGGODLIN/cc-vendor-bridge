@@ -1381,6 +1381,84 @@ ccp-gemini-flash() {
   )
 }
 
+# ===== CLIProxyAPI relay, Grok 4.7 via xAI OAuth (qwe70302 SuperGrok Heavy) =====
+# The account is a resold Heavy plan billed through Google Play and expires 2026-10-30;
+# after that the xai auth file stays on disk but every request fails, so the preflight
+# checks the file rather than trusting it.
+# Relay traffic draws on the grok.com Heavy weekly pool (≈1.74B tokens/week measured
+# 2026-09-30); `relay-status` shows how much is left.
+# Context: 520k is rejected with 400 and 500k is accepted; the relay prepends ~1,248
+# tokens of system prompt, so the CC cap sits a little under 500k.
+# grok-4.7-build-fast is the same model billed at 2x quota, so it is only offered as
+# the custom /model option, never as a default slot.
+# CC's effort picker is not wired: nobody has probed whether the xAI executor honours it.
+# Per-call override:
+#   ANTHROPIC_MODEL=grok-4.7-build-fast ccp-grok
+#   ANTHROPIC_DEFAULT_HAIKU_MODEL=grok-4.7 ccp-grok   # keep background traffic on Grok too
+ccp-grok() {
+  _ccp_model_map_preview || {
+    if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
+      echo "ccp-grok: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
+      return 1
+    fi
+    if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+      echo "[ccp-grok] relay not listening, kickstarting launchd service..." >&2
+      launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
+      local i=0
+      while (( i < 50 )); do
+        /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null && break
+        sleep 0.1; ((i++))
+      done
+      if (( i >= 50 )); then
+        print -P "%F{red}[ccp-grok] relay did not become ready in 5s — check ~/.cli-proxy-api/logs/%f" >&2
+        return 1
+      fi
+    fi
+    local -a auths=(${HOME}/.cli-proxy-api/xai-*.json(N))
+    if (( ${#auths} == 0 )); then
+      print -P "%F{red}[ccp-grok] 找不到 xAI 憑證 — Grok 全線不可用%f" >&2
+      print -P "%F{red}          重登：~/.cli-proxy-api/bin/cli-proxy-api --config ~/.cli-proxy-api/config.yaml -xai-login -no-browser%f" >&2
+      return 1
+    fi
+    if command -v jq >/dev/null 2>&1; then
+      local email disabled
+      email=$(jq -r '.email // "?"' "${auths[1]}" 2>/dev/null)
+      disabled=$(jq -r '.disabled // false' "${auths[1]}" 2>/dev/null)
+      if [[ "$disabled" == "true" ]]; then
+        print -P "%F{red}[ccp-grok] xAI 帳號 $email 被停用中 — 這次會直接失敗%f" >&2
+        return 1
+      fi
+      print -P "%F{green}[ccp-grok] 服務中：$email%f（Heavy 方案 2026-10-30 到期）" >&2
+    fi
+  }
+  (
+    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
+    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
+    export CC_VENDOR=grok
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-grok-4.7}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-grok-4.7}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-grok-4.7}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-grok-4.7}"
+    # HAIKU slot → free pool, same as ccp-relay: background summarisation should not
+    # spend the Heavy weekly pool.
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-ds-flash}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-grok-4.7-build-fast}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Grok 4.7 Fast}"
+    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Same model, 2x weekly quota per token}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-grok-4.7}"
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-498000}
+    # Same ~22k compact gap as the Gemini launchers; no Grok overshoot sample yet.
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-476000}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    # WebSearch: same unprobed relay translation path as ccp-relay / ccp-gpt
+    # (docs/caveats.md §13b).
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+  )
+}
+
 # ===== free pool: which DeepSeek weights are actually behind ds-flash =====
 # The provider only exposes the undated id `deepseek/deepseek-v4-flash` in
 # /v1/models; the dated build (…-0731) appears ONLY in the `model` field of a
@@ -2101,6 +2179,7 @@ ccp-resume() {
     kimi-*|moonshot-*) vendor="kimi" ;;        # kimi vs kimi-cn 同 model name 無法區分，default 國際版
     GLM-*|glm-*)       vendor="glm" ;;         # glm vs glm-cn 同上
     mimo-*)            vendor="mimo" ;;
+    grok-*)            vendor="grok" ;;
     qwen3-coder-*)     vendor="qwen-coding" ;;
     qwen3-*|qwen-*)    vendor="qwen" ;;
     claude-*)          vendor="anthropic" ;;
