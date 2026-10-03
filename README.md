@@ -91,6 +91,29 @@ python3 tests/test_launch_model_map.py
 
 測試以隔離版本／relay 設定、偽終端和假 CC 程式觀察實際啟動器輸出，不呼叫真實模型或啟停服務。
 
+## 共用 GPT priority 開關
+
+模型啟動器與 `cc-luna`、`cc-free`、`cc-pick` 接受第一個使用者參數 `-fast`／`--fast`：
+
+```bash
+ccp-sol -fast -c
+ccp-mix-sol --fast -p "任務"
+cc-luna -fast
+cc-pick -fast --last
+```
+
+開關加入 session 的 `X-CCP-Fast: 1` header，沿用本機 relay 的 GPT／Codex priority 規則。它不換模型、不改 `(max)` 或 effort，也不等於 Claude 官方 `/fast`；其他供應商不因這個 header 啟用 fast。模型名稱不帶 `-fast` 後綴時，header 仍會要求 priority。
+
+不帶旗標時保留原設定；選擇不寫回呼叫 shell，但既有 fast header 會繼續沿用。`ccp-gpt-smart` 保留既有例外：先移除繼承的 fast header，只有顯式帶旗標才重加。prompt 值或非首位的 `-fast` 會原樣交給 CC。`cc-pick` 先處理 fast，再處理 `--last`，不改已存配方。
+
+本機 `cc`、`ccopus`、`ccfable`、`claude`、`ccp` 透過 shell 函式共用同一個處理器；修改 shell 函式後需重新載入 shell。原生 Claude 請求不會因此開啟官方 fast。帳號旗標放在 fast 後，例如 `ccopus -fast -team-p`。
+
+行為測試只以隔離環境捕捉 CC 啟動參數，不呼叫真實模型、不啟停服務，也不量測加速或額度倍率：
+
+```bash
+python3 tests/test_fast_launchers.py
+```
+
 ## Caveats — verify before relying on these
 
 The vendor docs don't list these failure modes. 10 caveats catalogued so far:

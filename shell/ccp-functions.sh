@@ -35,6 +35,7 @@
 # Captured at source time so wrapper functions can locate sibling bin/ scripts.
 # zsh idiom: %x = currently-sourced file path; :A = absolute; :h = parent dir.
 _CC_VENDOR_BRIDGE_DIR="${${(%):-%x}:A:h:h}"
+source "${_CC_VENDOR_BRIDGE_DIR}/shell/cc-fast.sh"
 
 _ccp_model_map_preview() {
   [[ "${CCP_MODEL_MAP_PREVIEW:-0}" == 1 ]]
@@ -56,7 +57,7 @@ _ccp_run_claude() {
 }
 
 _cc_vendor_claude() {
-  _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "$@"
+  cc_fast_run _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "$@"
 }
 
 # GPT tier → current version. Launchers reference tiers only; the table itself lives outside this
@@ -137,7 +138,7 @@ ccp-deepseek() {
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     export DISABLE_COMPACT=${DISABLE_COMPACT:-1}
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1000000}
-    _cc_vendor_claude "$@"
+    _cc_vendor_claude -- "$@"
   )
 }
 
@@ -274,7 +275,7 @@ ccp-glm() {
       --disallowed-tools WebSearch \
       --append-system-prompt "${_nudge} IMPORTANT: When dispatching Task subagents or workflow agents that may need web search, you MUST include this verbatim instruction in their prompt: 'For web search use Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\"' — in interactive mode subagents do not inherit this nudge (session 2650cf5f verified: subagent fell back to DuckDuckGo/Bing/Google HTML scraping; 2026-08-22 marker probe confirmed the flag below covers --print runs only)." \
       --append-subagent-system-prompt "$_nudge" \
-      "$@"
+      -- "$@"
   )
 }
 
@@ -318,7 +319,7 @@ ccp-mimo() {
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1100000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    _cc_vendor_claude "$@"
+    _cc_vendor_claude -- "$@"
   )
 }
 
@@ -341,7 +342,7 @@ ccp-mimo-payg() {
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1100000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    _cc_vendor_claude "$@"
+    _cc_vendor_claude -- "$@"
   )
 }
 
@@ -459,7 +460,7 @@ ccp-bruce() {
       --model "$ANTHROPIC_MODEL" \
       --append-system-prompt "${_nudge} IMPORTANT: when dispatching Task subagents or workflow agents, include this guidance verbatim in their prompt — in interactive mode subagents do not inherit it (session 2650cf5f: a subagent fell back to scraping DuckDuckGo/Bing/Google HTML; 2026-08-22 marker probe confirmed the flag below covers --print runs only)." \
       --append-subagent-system-prompt "$_nudge" \
-      "$@"
+      -- "$@"
   )
 }
 
@@ -757,9 +758,9 @@ except Exception:
       [[ "$arg" == "--model" || "$arg" == --model=* ]] && has_model_arg=1
     done
     if (( has_model_arg )); then
-      _cc_vendor_claude "$@"
+      _cc_vendor_claude -- "$@"
     else
-      _cc_vendor_claude --model sonnet "$@"
+      _cc_vendor_claude --model sonnet -- "$@"
     fi
   )
 }
@@ -1002,13 +1003,6 @@ ccp-gpt-relogin() {
 }
 
 ccp-gpt() {
-  local _ccp_fast=0
-  # Only a leading flag counts, so a prompt or option value that reads "--fast"
-  # still reaches claude untouched; claude itself has no flag by that name.
-  if [[ ${1:-} == --fast || ${1:-} == -fast ]]; then
-    _ccp_fast=1
-    shift
-  fi
   if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
     return 1
   fi
@@ -1042,13 +1036,6 @@ ccp-gpt() {
     # No effort suffix on Opus: judge-class agents pin their own effort, and a
     # suffix would override it at the relay.
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_SOL}"
-    if (( _ccp_fast )); then
-      if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
-        export ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS}"$'\n'"X-CCP-Fast: 1"
-      else
-        export ANTHROPIC_CUSTOM_HEADERS="X-CCP-Fast: 1"
-      fi
-    fi
     # SONNET/HAIKU land on Luna at pinned max effort. Terra is retired
     # from the mapping: in practice only Sol and Luna earn their price, and Terra sat in
     # the middle being neither. The `(model)(effort)` suffix is parsed by the relay and
@@ -1149,7 +1136,7 @@ ccp-gpt() {
       --disallowed-tools 'WebSearch' \
       --append-system-prompt "${_rules}IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面三條逐字放進它們的 prompt。互動模式下 subagent 不會繼承本注入，只有 --print 模式才會。" \
       --append-subagent-system-prompt "$_rules" \
-      "$@"
+      -- "$@"
   )
 }
 
@@ -1296,7 +1283,7 @@ ccp-gemini-pro() {
     # WebSearch: same unprobed relay translation path as ccp-gpt
     # (docs/caveats.md §13b). Unlike ccp-gpt, Skill(claude-api) stays allowed —
     # its ~200k-token injection fits the 1M window.
-    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
   )
 }
 
@@ -1323,7 +1310,7 @@ ccp-gemini-flash() {
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
   )
 }
 
@@ -1402,7 +1389,7 @@ ccp-grok() {
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     # WebSearch: same unprobed relay translation path as ccp-gpt
     # (docs/caveats.md §13b).
-    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
   )
 }
 
@@ -1959,7 +1946,7 @@ ccp-free() {
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-480000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    _ccp_run_claude "$claude_bin" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    cc_fast_run _ccp_run_claude "$claude_bin" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
   )
 }
 
@@ -2044,7 +2031,7 @@ ccp-mix-gpt() {
     main_effort=$(_ccp_effort_for_model "$ANTHROPIC_MODEL")
     local -a effort_args=()
     [[ -n "$main_effort" ]] && effort_args=(--effort "$main_effort")
-    _ccp_run_claude "$claude_bin" "${effort_args[@]}" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "$@"
+    cc_fast_run _ccp_run_claude "$claude_bin" "${effort_args[@]}" --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
   )
 }
 
@@ -2146,7 +2133,7 @@ ccp-resume() {
   # (otherwise CC defaults to ccp-* function's default, e.g. GLM-5.1).
   if [[ "$vendor" == "anthropic" || "$vendor" == "unknown" ]]; then
     echo "[ccp-resume] resuming via selected Claude Code binary (model=$model)"
-    ANTHROPIC_MODEL="$model" _cc_vendor_claude --resume "$fullsid"
+    ANTHROPIC_MODEL="$model" _cc_vendor_claude --resume "$fullsid" --
   else
     local fn="ccp-$vendor"
     if ! type "$fn" >/dev/null 2>&1; then
