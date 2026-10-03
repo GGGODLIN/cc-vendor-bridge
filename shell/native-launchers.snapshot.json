@@ -1,0 +1,5 @@
+{
+  "format": "unified-diff",
+  "sha256": "9165dd342fdb3f188fd15440f7eb5297b3610ec0353fbb7c1bf7db32ce9187f5",
+  "patch": "--- zshrc.before\n+++ zshrc.current\n@@ -68,7 +68,7 @@\n }\n \n claude() {\n-  _cc_launch \"$@\"\n+  cc_fast_run _cc_launch -- \"$@\"\n }\n \n claude-official() {\n@@ -299,19 +299,26 @@\n   fi\n }\n \n-cc() {\n+_cc_native() {\n+  local model=\"$1\" effort=\"$2\"; shift 2\n   local dir; dir=$(_cc_dir \"$1\"); [[ -n $dir ]] && shift\n-  _cc_exec \"$dir\" \"$@\"\n+  if [[ -n \"$model\" ]]; then\n+    _cc_exec \"$dir\" --model \"$model\" --effort \"$effort\" \"$@\"\n+  else\n+    _cc_exec \"$dir\" \"$@\"\n+  fi\n }\n \n+cc() {\n+  cc_fast_run _cc_native '' '' -- \"$@\"\n+}\n+\n ccopus() {\n-  local dir; dir=$(_cc_dir \"$1\"); [[ -n $dir ]] && shift\n-  _cc_exec \"$dir\" --model 'opus[1m]' --effort xhigh \"$@\"\n+  cc_fast_run _cc_native 'opus[1m]' xhigh -- \"$@\"\n }\n \n ccfable() {\n-  local dir; dir=$(_cc_dir \"$1\"); [[ -n $dir ]] && shift\n-  _cc_exec \"$dir\" --model fable --effort medium \"$@\"\n+  cc_fast_run _cc_native fable medium -- \"$@\"\n }\n \n # 切換 cc-current 這個 selector symlink 指向哪個 binary，一次改動全部啟動器\n"
+}
