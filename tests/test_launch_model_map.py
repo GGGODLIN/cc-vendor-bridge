@@ -220,6 +220,18 @@ function launchctl {{ printf 'UNEXPECTED-SERVICE-START\\n' >&2; return 42; }}
         self.assertEqual(record["argv"][-2:], ["--resume", "fixture-session"])
         self.assertNotIn(flag, record["argv"])
 
+  def test_gpt_main_entries_turn_idle_compaction_off_and_others_leave_it(self):
+    flag = ["--settings", '{"idleCompaction":false}']
+    for entry, expected in (("ccp-gpt", True), ("ccp-sol", True), ("ccp-gpt-smart", True), ("ccp-bruce", True),
+                            ("ccp-grok", False), ("ccp-glm", False)):
+      with self.subTest(entry=entry):
+        self.records.unlink(missing_ok=True)
+        status, output, _ = self.launch(entry, terminal=False)
+        self.assertEqual(status, 0, output)
+        argv = self.read_records()[0]["argv"]
+        pairs = [argv[i:i + 2] for i in range(len(argv) - 1)]
+        self.assertEqual(flag in pairs, expected, argv)
+
   def test_opus_maps_to_sol_without_fast_by_default(self):
     for entry in ("ccp-gpt", "ccp-sol"):
       with self.subTest(entry=entry):

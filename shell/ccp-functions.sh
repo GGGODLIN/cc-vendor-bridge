@@ -456,8 +456,10 @@ ccp-bruce() {
     # --model CLI flag outranks settings.json, whose "model" pin would otherwise
     # override the env mapping and mis-route the session.
     local _nudge="This vendor bills per token against a prepaid balance, and the context window is pinned at 272,000 because crossing that line rebills the entire request at double the input rate. Budget context deliberately. WebSearch works here and returns real results, but each call injects roughly 21,000 tokens of search output — about 8% of the whole window. For lightweight factual lookups prefer the Bash tool: ${_CC_VENDOR_BRIDGE_DIR}/bin/exa-search.sh \"<query>\" — top 5 results with LLM-ready highlights from Exa neural search, free tier, zero Bruce token cost, and a fraction of the context. Pass --json for raw fields. Reserve WebSearch for cases that genuinely need live page content or where exa comes back empty."
+    # Same GPT ~30 min cache as ccp-gpt: keep CC's 1h-timed idle compaction off.
     _cc_vendor_claude --effort "${CCP_BRUCE_EFFORT:-high}" \
       --model "$ANTHROPIC_MODEL" \
+      --settings '{"idleCompaction":false}' \
       --append-system-prompt "${_nudge} IMPORTANT: when dispatching Task subagents or workflow agents, include this guidance verbatim in their prompt — in interactive mode subagents do not inherit it (session 2650cf5f: a subagent fell back to scraping DuckDuckGo/Bing/Google HTML; 2026-08-22 marker probe confirmed the flag below covers --print runs only)." \
       --append-subagent-system-prompt "$_nudge" \
       -- "$@"
@@ -1132,7 +1134,11 @@ ccp-gpt() {
     local main_effort
     main_effort=$(_ccp_effort_for_model "$ANTHROPIC_MODEL")
     [[ -z "$main_effort" ]] && main_effort=medium
+    # CC's idle compaction fires at 90% of a 1h cache TTL it assumes for every model;
+    # GPT keeps its cache only ~30 min, so on GPT sessions it fired at 56–62 min idle
+    # (21 notices, 2026-10-08..11), after the cache it is meant to reuse had likely gone.
     _cc_vendor_claude --effort "$main_effort" --model "$ANTHROPIC_MODEL" \
+      --settings '{"idleCompaction":false}' \
       --disallowed-tools 'WebSearch' \
       --append-system-prompt "${_rules}IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面三條逐字放進它們的 prompt。互動模式下 subagent 不會繼承本注入，只有 --print 模式才會。" \
       --append-subagent-system-prompt "$_rules" \
