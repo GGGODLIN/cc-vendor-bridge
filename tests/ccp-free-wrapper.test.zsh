@@ -988,7 +988,7 @@ cat > "$WEIGHT_DIR/config.yaml" <<'YAML'
 YAML
 cat > "$WEIGHT_DIR/bin/curl" <<'STUB'
 #!/usr/bin/env zsh
-print -r -- "called" >> "$CCP_FREE_CURL_LOG"
+print -r -- "$*" >> "$CCP_FREE_CURL_LOG"
 print -r -- '{"model":"deepseek/deepseek-v4-flash-0731","provider":"Reka"}'
 STUB
 cat > "$WEIGHT_DIR/bin/curl-fail" <<'STUB'
@@ -1026,6 +1026,7 @@ probe_weight "$WEIGHT_DIR/cache" curl 1000000
 assert_weight 'cold probe reports the dated build' 'deepseek/deepseek-v4-flash-0731'
 assert_weight 'cold probe marks it as fresh' '剛剛探測'
 assert_line_count 'cold probe hits the network once' "$WEIGHT_DIR/curl.log" 1
+assert_file_line 'cold probe body keeps 64 and marks diagnostic' "$WEIGHT_DIR/curl.log" '-fsS --max-time 20 http://127.0.0.1:3457/v1/chat/completions -H Authorization: Bearer stub-key -H Content-Type: application/json -d {"model":"deepseek/deepseek-v4-flash","max_tokens":64,"messages":[{"role":"user","content":"ok"}],"metadata":{"budget_mode":"diagnostic"}}'
 
 rm -f "$WEIGHT_DIR/curl.log"
 probe_weight "$WEIGHT_DIR/cache" curl 1025200

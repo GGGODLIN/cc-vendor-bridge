@@ -1454,7 +1454,7 @@ _ccp_free_ds_weight() {
     probed=$("$curl_bin" -fsS --max-time 20 "${base_url%/}/chat/completions" \
       -H "Authorization: Bearer $api_key" \
       -H 'Content-Type: application/json' \
-      -d '{"model":"deepseek/deepseek-v4-flash","max_tokens":64,"messages":[{"role":"user","content":"ok"}]}' \
+      -d '{"model":"deepseek/deepseek-v4-flash","max_tokens":64,"messages":[{"role":"user","content":"ok"}],"metadata":{"budget_mode":"diagnostic"}}' \
       2>/dev/null | jq -r 'select(.model != null) | "\(.model)\t\(.provider // "?")"' 2>/dev/null)
   fi
 
