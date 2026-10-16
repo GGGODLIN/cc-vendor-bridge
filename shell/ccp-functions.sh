@@ -1320,6 +1320,46 @@ ccp-gemini-flash() {
   )
 }
 
+# ===== Magpie relay, Gemini 4 Argon on a friend's paid Google key (2026-10-16) =====
+# The key sits in Magpie's `google` provider and is billed per token to its owner
+# ($2 in / $10 out per 1M, promo price), so every slot — Haiku included, by the
+# user's choice — spends that key.
+# Argon only has low/medium/high thinking. Magpie takes the level as a ":high" suffix;
+# the CPA-style "(high)" is forwarded verbatim and Google rejects it with 400.
+# The key reports outputTokenLimit 32768, below CC's default for unknown models, so
+# a longer reply would be cut off without the explicit cap.
+# Magpie is the shared entry for every session, so the preflight only checks that
+# 8317 answers and never restarts anything.
+ccp-gemini-argon() {
+  _ccp_model_map_preview || {
+    if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+      print -P "%F{red}[ccp-gemini-argon] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
+      return 1
+    fi
+  }
+  (
+    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
+    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
+    export CC_VENDOR=gemini-argon
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-google/gemini-4-argon:high}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-google/gemini-4-argon:high}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-google/gemini-4-argon:high}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-google/gemini-4-argon:high}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-google/gemini-4-argon:high}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-google/gemini-4-argon:high}"
+    export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-32768}
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
+    # Same ~22k compact gap as the other Gemini launchers; no Argon overshoot sample yet.
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    # WebSearch: same unprobed relay translation path as ccp-gpt (docs/caveats.md §13b).
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
+  )
+}
+
 # ===== CLIProxyAPI relay, Grok 4.7 via xAI OAuth (qwe70302 SuperGrok Heavy) =====
 # The account is a resold Heavy plan billed through Google Play and expires 2026-10-30;
 # after that the xai auth file stays on disk but every request fails, so the preflight
