@@ -1354,6 +1354,10 @@ ccp-gemini-argon() {
     # Same ~22k compact gap as the other Gemini launchers; no Argon overshoot sample yet.
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    # Magpie's 1m quota-rest sends Retry-After: 60, which CC gives up on after one
+    # try unless the retry watchdog is on.
+    export CLAUDE_CODE_MAX_RETRIES=${CLAUDE_CODE_MAX_RETRIES:-60}
+    export CLAUDE_CODE_RETRY_WATCHDOG=${CLAUDE_CODE_RETRY_WATCHDOG:-1}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     # WebSearch: same unprobed relay translation path as ccp-gpt (docs/caveats.md §13b).
     _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
