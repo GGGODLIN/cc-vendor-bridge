@@ -32,6 +32,9 @@ class LaunchModelMapTest(unittest.TestCase):
 import json,os,sys
 keys=['ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_FABLE_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','CLAUDE_CODE_SUBAGENT_MODEL']
 record={'slots':[os.environ.get(k,'') for k in keys],'argv':sys.argv[1:],'fast':'X-CCP-Fast: 1' in os.environ.get('ANTHROPIC_CUSTOM_HEADERS',''),'headers':os.environ.get('ANTHROPIC_CUSTOM_HEADERS','')}
+record['limits']=[os.environ.get(k,'') for k in ('CLAUDE_CODE_MAX_OUTPUT_TOKENS','CLAUDE_CODE_MAX_CONTEXT_TOKENS')]
+record['base_url']=os.environ.get('ANTHROPIC_BASE_URL','')
+record['relay_auth']=os.environ.get('ANTHROPIC_AUTH_TOKEN')=='AUTH-CREDENTIAL-CANARY' and 'ANTHROPIC_API_KEY' not in os.environ
 with open(os.environ['CC_RECORDS'],'a') as f:f.write(json.dumps(record)+'\\n')
 print('CC-STDOUT-UNCHANGED')
 """)
@@ -47,7 +50,8 @@ else:print(json.dumps({'files':[{'provider':'codex','email':'fixture@example.tes
     self.stubs.write_text(f"""function /usr/bin/nc {{ return 0; }}
 function curl {{ {shlex.quote(str(fake_curl))} "$@"; }}
 function /usr/bin/curl {{ {shlex.quote(str(fake_curl))} "$@"; }}
-function launchctl {{ printf 'UNEXPECTED-SERVICE-START\\n' >&2; return 42; }}
+function launchctl {{ printf 'attempted\\n' >> {shlex.quote(str(self.fixture / 'service-starts'))}; printf 'UNEXPECTED-SERVICE-START\\n' >&2; return 42; }}
+function /usr/bin/launchctl {{ launchctl "$@"; }}
 """)
     accounts = self.fixture / "accounts.json"
     requests = self.fixture / "requests.json"
@@ -124,6 +128,42 @@ function launchctl {{ printf 'UNEXPECTED-SERVICE-START\\n' >&2; return 42; }}
         self.assertIn("CC-STDOUT-UNCHANGED", output)
         self.assertNotIn("CREDENTIAL-CANARY", output)
         self.assertNotIn("UNEXPECTED-SERVICE-START", output)
+
+  def test_ds_free_launch_pins_models_limits_auth_and_preserves_fast_arguments(self):
+    slots = ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+             "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL")
+    env = self.env | dict.fromkeys(slots, "gpt-outer(max)") | {
+      "ANTHROPIC_API_KEY": "OUTER-CREDENTIAL-CANARY",
+      "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
+      "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "900000",
+      "ANTHROPIC_CUSTOM_HEADERS": "X-Existing: yes",
+    }
+    args = ["--resume", "session with spaces", "-p", "-fast", ""]
+    for flag in ("-fast", "--fast"):
+      with self.subTest(flag=flag):
+        self.records.unlink(missing_ok=True)
+        status, output, errors = self.launch("ccp-ds-free", [flag, *args], terminal=False, env=env)
+        self.assertEqual(status, 0, output + errors)
+        record, = self.read_records()
+        self.assertEqual(record["slots"], ["group/ds-free:max"] * 6)
+        self.assertEqual(record["limits"], ["32000", "1000000"])
+        self.assertEqual(record["base_url"], "http://127.0.0.1:8317")
+        self.assertTrue(record["relay_auth"])
+        self.assertEqual(record["headers"], "X-Existing: yes\nX-CCP-Fast: 1")
+        self.assertEqual(record["argv"], ["--model", "group/ds-free:max", "--disallowed-tools", "WebSearch", *args])
+        self.assertNotIn("CREDENTIAL-CANARY", output + errors)
+        self.assertNotIn("UNEXPECTED-SERVICE-START", output + errors)
+        self.assertFalse((self.fixture / "service-starts").exists())
+
+  def test_ds_free_missing_relay_aborts_without_starting_any_service_or_claude(self):
+    with self.stubs.open("a") as source:
+      source.write("function /usr/bin/nc { return 1; }\n")
+    status, output, errors = self.launch("ccp-ds-free", terminal=False)
+    self.assertEqual(status, 1, output + errors)
+    self.assertIn("relay :8317 not listening", errors)
+    self.assertNotIn("UNEXPECTED-SERVICE-START", output + errors)
+    self.assertFalse((self.fixture / "service-starts").exists())
+    self.assertFalse(self.records.exists())
 
   def test_explicit_model_and_environment_overrides_only_affect_active_row(self):
     env = self.env | {"ANTHROPIC_MODEL": "env-model", "ANTHROPIC_DEFAULT_FABLE_MODEL": "env-fable", "ANTHROPIC_DEFAULT_OPUS_MODEL": "env-opus"}

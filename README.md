@@ -67,6 +67,12 @@ ccp-qwen        # opens CC pointed at Qwen / DashScope intl
 
 Each function uses a subshell so env vars don't leak into your main shell. Your default `claude` command still hits Anthropic.
 
+## DeepSeek 免費池入口
+
+重新 source shell 函式後，執行 `ccp-ds-free`；例如 `ccp-ds-free -fast -c`。main、Fable、Opus、Sonnet、Haiku 與預設 subagent 六槽固定使用 `group/ds-free:max`，覆蓋外層模型環境變數。
+
+入口沿用既有 relay `127.0.0.1:8317` 與 CC key；如果 relay 未啟動，就回報錯誤，不重啟共用 Magpie。context 設為 1000000 tokens；output 取 Zen 32000、WorkBuddy 128000 的共同上限 32000，讓 fallback 也適用。此處描述啟動設定，未驗證上游可用性。
+
 ## 即時模型映射表
 
 重新載入 shell 函式後，可手動查看完整非直連映射：

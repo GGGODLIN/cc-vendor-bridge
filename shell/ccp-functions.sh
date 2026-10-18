@@ -1364,6 +1364,37 @@ ccp-gemini-argon() {
   )
 }
 
+# Zen caps output at 32000 while WorkBuddy allows 128000; use the shared ceiling
+# so a relay fallback does not inherit an unsupported output budget.
+ccp-ds-free() {
+  if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+    print -P "%F{red}[ccp-ds-free] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
+    return 1
+  fi
+  (
+    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env || exit 1
+    if ! _ccp_model_map_preview && [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
+      print -P "%F{red}[ccp-ds-free] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
+      exit 1
+    fi
+    unset ANTHROPIC_API_KEY
+    export CC_VENDOR=ds-free
+    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
+    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_MODEL='group/ds-free:max'
+    export ANTHROPIC_DEFAULT_FABLE_MODEL='group/ds-free:max'
+    export ANTHROPIC_DEFAULT_OPUS_MODEL='group/ds-free:max'
+    export ANTHROPIC_DEFAULT_SONNET_MODEL='group/ds-free:max'
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL='group/ds-free:max'
+    export CLAUDE_CODE_SUBAGENT_MODEL='group/ds-free:max'
+    export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
+  )
+}
+
 # ===== CLIProxyAPI relay, Grok 4.7 via xAI OAuth (qwe70302 SuperGrok Heavy) =====
 # The account is a resold Heavy plan billed through Google Play and expires 2026-10-30;
 # after that the xai auth file stays on disk but every request fails, so the preflight
