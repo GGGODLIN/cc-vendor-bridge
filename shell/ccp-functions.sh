@@ -122,6 +122,19 @@ _ccp_run_claude() {
 }
 
 _cc_vendor_claude() {
+  local -a args=("$@")
+  if (( ${args[(Ie)-test]} )); then
+    # -test loads the cc-unii memory experiment. A claude.ai Team login seats the
+    # org's security plugin, which skips every user plugin's session.compact hook,
+    # so this session runs on the relay key instead of the claude.ai login.
+    if [[ -z "${CLIPROXY_KEY_CC-}" ]]; then
+      print -u2 -- '[ccp] -test needs CLIPROXY_KEY_CC (this launcher did not load the relay keys)'
+      return 1
+    fi
+    args=(--plugin-dir "${CCP_TEST_PLUGIN_DIR:-$HOME/Desktop/projects/cc-unii-memory/plugin}" "${(@)args:#-test}")
+    ANTHROPIC_AUTH_TOKEN="$CLIPROXY_KEY_CC" cc_fast_run _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "${args[@]}"
+    return
+  fi
   cc_fast_run _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "$@"
 }
 
