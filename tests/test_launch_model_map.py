@@ -34,7 +34,7 @@ keys=['ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_FABLE_MODEL','ANTHROPIC_DEFAULT_OPUS_
 record={'slots':[os.environ.get(k,'') for k in keys],'argv':sys.argv[1:],'fast':'X-CCP-Fast: 1' in os.environ.get('ANTHROPIC_CUSTOM_HEADERS',''),'headers':os.environ.get('ANTHROPIC_CUSTOM_HEADERS','')}
 record['limits']=[os.environ.get(k,'') for k in ('CLAUDE_CODE_MAX_OUTPUT_TOKENS','CLAUDE_CODE_MAX_CONTEXT_TOKENS')]
 record['base_url']=os.environ.get('ANTHROPIC_BASE_URL','')
-record['relay_auth']=os.environ.get('ANTHROPIC_AUTH_TOKEN')=='AUTH-CREDENTIAL-CANARY' and 'ANTHROPIC_API_KEY' not in os.environ
+record['split_auth']='ANTHROPIC_AUTH_TOKEN' not in os.environ and 'ANTHROPIC_API_KEY' not in os.environ
 with open(os.environ['CC_RECORDS'],'a') as f:f.write(json.dumps(record)+'\\n')
 print('CC-STDOUT-UNCHANGED')
 """)
@@ -134,6 +134,7 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
              "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL")
     env = self.env | dict.fromkeys(slots, "gpt-outer(max)") | {
       "ANTHROPIC_API_KEY": "OUTER-CREDENTIAL-CANARY",
+      "ANTHROPIC_AUTH_TOKEN": "OUTER-AUTH-CANARY",
       "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
       "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "900000",
       "ANTHROPIC_CUSTOM_HEADERS": "X-Existing: yes",
@@ -147,8 +148,8 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
         record, = self.read_records()
         self.assertEqual(record["slots"], ["group/ds-free:max"] * 6)
         self.assertEqual(record["limits"], ["32000", "1000000"])
-        self.assertEqual(record["base_url"], "http://127.0.0.1:8317")
-        self.assertTrue(record["relay_auth"])
+        self.assertEqual(record["base_url"], "http://127.0.0.1:8318")
+        self.assertTrue(record["split_auth"])
         self.assertEqual(record["headers"], "X-Existing: yes\nX-CCP-Fast: 1")
         self.assertEqual(record["argv"], ["--model", "group/ds-free:max", "--disallowed-tools", "WebSearch", *args])
         self.assertNotIn("CREDENTIAL-CANARY", output + errors)

@@ -358,6 +358,7 @@ invoke_wrapper() {
     export CCP_FREE_NOW='2026-08-29T21:00:00'
     export CCP_FREE_SINCE='2026-08-29T20:00:00'
     export ANTHROPIC_API_KEY='outer-paid-key'
+    export ANTHROPIC_AUTH_TOKEN='outer-auth-token'
     export ANTHROPIC_DEFAULT_FABLE_MODEL='outer-fable-model'
     export ANTHROPIC_DEFAULT_OPUS_MODEL='outer-opus-model'
     export ANTHROPIC_DEFAULT_SONNET_MODEL='outer-sonnet-model'
@@ -482,8 +483,8 @@ assert_output_not_contains 'free pool output omits LiteLLM prompt canary' 'LITEL
 assert_output_not_contains 'free pool output omits LiteLLM response canary' 'LITELLM-RESPONSE-CANARY'
 assert_output_not_contains 'free pool output omits LiteLLM error canary' 'LITELLM-ERROR-CANARY'
 assert_file_line 'vendor marker is process-local free' "$FIXTURE/capture.log" 'cc_vendor=free'
-assert_file_line 'base URL comes from keys.env' "$FIXTURE/capture.log" "base_url=$CC_URL"
-assert_file_line 'auth token is the CC relay key' "$FIXTURE/capture.log" "auth_token=$CC_KEY"
+assert_file_line 'base URL points at cc-split-proxy' "$FIXTURE/capture.log" 'base_url=http://127.0.0.1:8318'
+assert_file_line 'auth token is removed to preserve claude.ai OAuth' "$FIXTURE/capture.log" 'auth_token='
 assert_file_line 'Anthropic API key is removed' "$FIXTURE/capture.log" 'api_key='
 assert_file_line 'main model is free-smart(max)' "$FIXTURE/capture.log" "model=$SMART_MODEL"
 assert_file_line 'FABLE model is hard-pinned free-smart(max)' "$FIXTURE/capture.log" "fable_model=$SMART_MODEL"

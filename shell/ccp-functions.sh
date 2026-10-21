@@ -41,6 +41,25 @@ _ccp_model_map_preview() {
   [[ "${CCP_MODEL_MAP_PREVIEW:-0}" == 1 ]]
 }
 
+_ccp_ensure_split_proxy() {
+  _ccp_model_map_preview && return 0
+  local nc_bin="${CCP_FREE_NC_BIN:-/usr/bin/nc}"
+  local launchctl_bin="${CCP_FREE_LAUNCHCTL_BIN:-/usr/bin/launchctl}"
+  local sleep_bin="${CCP_FREE_SLEEP_BIN:-/bin/sleep}"
+  if ! "$nc_bin" -z 127.0.0.1 8318 2>/dev/null; then
+    "$launchctl_bin" kickstart "gui/$UID/com.philip.cc-split-proxy" >/dev/null 2>&1 || true
+    local i=0
+    while (( i < 50 )); do
+      "$nc_bin" -z 127.0.0.1 8318 2>/dev/null && return 0
+      "$sleep_bin" 0.1
+      ((i++))
+    done
+    print -P "%F{red}[ccp] cc-split-proxy (:8318) did not become ready in 5s — check ~/.cc-split-proxy/logs/router.log%f" >&2
+    return 1
+  fi
+  return 0
+}
+
 _ccp_run_claude() {
   local launcher="$1"
   shift
@@ -1026,13 +1045,13 @@ ccp-gpt() {
       return 1
     fi
   fi
+  _ccp_ensure_split_proxy || return 1
   _ccp_model_map_preview || ccp-gpt-whoami
   (
     _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
     export CC_VENDOR=gpt
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_BASE_URL="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
     export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-$GPT_ASTRA}
     export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_ASTRA}
     # No effort suffix on Opus: judge-class agents pin their own effort, and a
@@ -1264,12 +1283,12 @@ _ccp-gemini-preflight() {
 # Pro tier — Gemini 3.1 Pro High. Thinking on by default via the (high) suffix.
 ccp-gemini-pro() {
   _ccp-gemini-preflight ccp-gemini-pro || return 1
+  _ccp_ensure_split_proxy || return 1
   (
     _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
     export CC_VENDOR=gemini-pro
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_BASE_URL="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gemini-pro-agent(high)}"
     export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gemini-pro-agent(high)}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gemini-pro-agent(high)}"
@@ -1297,12 +1316,12 @@ ccp-gemini-pro() {
 # default; append (high) to any slot to turn it on.
 ccp-gemini-flash() {
   _ccp-gemini-preflight ccp-gemini-flash || return 1
+  _ccp_ensure_split_proxy || return 1
   (
     _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    unset ANTHROPIC_API_KEY
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
     export CC_VENDOR=gemini-flash
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_BASE_URL="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gemini-3.7-flash-high}"
     export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gemini-3.7-flash-high}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gemini-3.7-flash-high}"
@@ -1337,12 +1356,12 @@ ccp-gemini-argon() {
       return 1
     fi
   }
+  _ccp_ensure_split_proxy || return 1
   (
     _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
     export CC_VENDOR=gemini-argon
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_BASE_URL="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-google/gemini-4-argon:high}"
     export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-google/gemini-4-argon:high}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-google/gemini-4-argon:high}"
@@ -1371,16 +1390,16 @@ ccp-ds-free() {
     print -P "%F{red}[ccp-ds-free] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
     return 1
   fi
+  _ccp_ensure_split_proxy || return 1
   (
     _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env || exit 1
     if ! _ccp_model_map_preview && [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
       print -P "%F{red}[ccp-ds-free] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
       exit 1
     fi
-    unset ANTHROPIC_API_KEY
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
     export CC_VENDOR=ds-free
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_BASE_URL="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
     export ANTHROPIC_MODEL='group/ds-free:max'
     export ANTHROPIC_DEFAULT_FABLE_MODEL='group/ds-free:max'
     export ANTHROPIC_DEFAULT_OPUS_MODEL='group/ds-free:max'
@@ -1445,12 +1464,12 @@ ccp-grok() {
       print -P "%F{green}[ccp-grok] 服務中：$email%f（Heavy 方案 2026-10-30 到期）" >&2
     fi
   }
+  _ccp_ensure_split_proxy || return 1
   (
     _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    unset ANTHROPIC_API_KEY  # relay auth goes through AUTH_TOKEN (Bearer)
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
     export CC_VENDOR=grok
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_BASE_URL="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-grok-4.7}"
     export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-grok-4.7}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-grok-4.7}"
@@ -1972,6 +1991,7 @@ ccp-free() {
       return 1
     fi
   fi
+  _ccp_ensure_split_proxy || return 1
   (
     _ccp_model_map_preview || source "$keys_file"
     if ! _ccp_model_map_preview && [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
@@ -1979,10 +1999,9 @@ ccp-free() {
       exit 1
     fi
     _ccp_model_map_preview || ccp-free-whoami ccp-free
-    unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
     export CC_VENDOR=free
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_BASE_URL="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
     # Main slot defaults to the capability-ordered twin chain; /model free(max)
     # switches back to the stability-ordered chain in-session.
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-free-smart(max)}"
@@ -2062,6 +2081,7 @@ ccp-mix-gpt() {
       return 1
     fi
   fi
+  _ccp_ensure_split_proxy || return 1
   (
     _ccp_model_map_preview || source "$keys_file"
     if ! _ccp_model_map_preview && [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
@@ -2087,14 +2107,13 @@ ccp-mix-gpt() {
     [[ "$fable_base" == ($GPT_ASTRA|$GPT_SOL|$GPT_LUNA) ]] && fable_model="${fable_base}[1m]"
     print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
     _ccp_model_map_preview || ccp-free-whoami ccp-mix-gpt
-    unset ANTHROPIC_API_KEY ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
     if [[ "$main_model" == *[Gg][Pp][Tt]* ]]; then
       export CC_VENDOR=mix-gpt
     else
       export CC_VENDOR=mix
     fi
-    export ANTHROPIC_BASE_URL=$CLIPROXY_BASE_URL
-    export ANTHROPIC_AUTH_TOKEN=$CLIPROXY_KEY_CC
+    export ANTHROPIC_BASE_URL="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
     export ANTHROPIC_MODEL="$main_model"
     export ANTHROPIC_DEFAULT_FABLE_MODEL="$fable_model"
     export ANTHROPIC_DEFAULT_OPUS_MODEL='free(max)'
