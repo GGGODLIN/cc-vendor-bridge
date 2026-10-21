@@ -35,6 +35,7 @@ record={'slots':[os.environ.get(k,'') for k in keys],'argv':sys.argv[1:],'fast':
 record['limits']=[os.environ.get(k,'') for k in ('CLAUDE_CODE_MAX_OUTPUT_TOKENS','CLAUDE_CODE_MAX_CONTEXT_TOKENS')]
 record['base_url']=os.environ.get('ANTHROPIC_BASE_URL','')
 record['split_auth']='ANTHROPIC_AUTH_TOKEN' not in os.environ and 'ANTHROPIC_API_KEY' not in os.environ
+record['relay_auth']=os.environ.get('ANTHROPIC_AUTH_TOKEN')=='AUTH-CREDENTIAL-CANARY' and 'ANTHROPIC_API_KEY' not in os.environ
 with open(os.environ['CC_RECORDS'],'a') as f:f.write(json.dumps(record)+'\\n')
 print('CC-STDOUT-UNCHANGED')
 """)
@@ -143,7 +144,7 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     for flag in ("-fast", "--fast"):
       with self.subTest(flag=flag):
         self.records.unlink(missing_ok=True)
-        status, output, errors = self.launch("ccp-ds-free", [flag, *args], terminal=False, env=env)
+        status, output, errors = self.launch("ccp-ds-free", [flag, *args], terminal=False, env=env | {"CCP_CLAUDE_OAUTH_PRESENT": "1"})
         self.assertEqual(status, 0, output + errors)
         record, = self.read_records()
         self.assertEqual(record["slots"], ["group/ds-free:max"] * 6)
@@ -155,6 +156,12 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
         self.assertNotIn("CREDENTIAL-CANARY", output + errors)
         self.assertNotIn("UNEXPECTED-SERVICE-START", output + errors)
         self.assertFalse((self.fixture / "service-starts").exists())
+    self.records.unlink(missing_ok=True)
+    status, output, errors = self.launch("ccp-ds-free", args, terminal=False, env=env)
+    self.assertEqual(status, 0, output + errors)
+    record, = self.read_records()
+    self.assertEqual(record["base_url"], "http://127.0.0.1:8318")
+    self.assertTrue(record["relay_auth"])
 
   def test_ds_free_missing_relay_aborts_without_starting_any_service_or_claude(self):
     with self.stubs.open("a") as source:

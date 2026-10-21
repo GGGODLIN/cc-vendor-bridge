@@ -357,6 +357,7 @@ invoke_wrapper() {
     export CCP_FREE_WORKBUDDY_ACCOUNTS_FILE="$FIXTURE/workbuddy-accounts.json"
     export CCP_FREE_NOW='2026-08-29T21:00:00'
     export CCP_FREE_SINCE='2026-08-29T20:00:00'
+    export CCP_CLAUDE_OAUTH_PRESENT="${CCP_CLAUDE_OAUTH_PRESENT:-1}"
     export ANTHROPIC_API_KEY='outer-paid-key'
     export ANTHROPIC_AUTH_TOKEN='outer-auth-token'
     export ANTHROPIC_DEFAULT_FABLE_MODEL='outer-fable-model'
@@ -505,6 +506,17 @@ assert_file_line 'CLI model flag pins free-smart(max)' "$FIXTURE/capture.log" "a
 assert_file_line 'WebSearch is disallowed' "$FIXTURE/capture.log" 'arg3=--disallowed-tools'
 assert_file_line 'WebSearch tool name follows' "$FIXTURE/capture.log" 'arg4=WebSearch'
 assert_file_line 'caller arguments are preserved' "$FIXTURE/capture.log" 'arg5=--print'
+teardown_fixture
+
+setup_fixture
+: > "$FIXTURE/ready"
+export CCP_CLAUDE_OAUTH_PRESENT=0
+invoke_wrapper ready
+unset CCP_CLAUDE_OAUTH_PRESENT
+assert_status 'logged-out fallback invocation returns success' 0
+assert_file_line 'logged-out fallback keeps cc-split-proxy base URL' "$FIXTURE/capture.log" 'base_url=http://127.0.0.1:8318'
+assert_file_line 'logged-out fallback sets relay key as auth token' "$FIXTURE/capture.log" "auth_token=$CC_KEY"
+assert_file_line 'logged-out fallback still removes Anthropic API key' "$FIXTURE/capture.log" 'api_key='
 teardown_fixture
 
 print -r -- '── WorkBuddy V4.1 health'
