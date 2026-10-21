@@ -131,7 +131,8 @@ _cc_vendor_claude() {
       print -u2 -- '[ccp] -test needs CLIPROXY_KEY_CC (this launcher did not load the relay keys)'
       return 1
     fi
-    args=(--plugin-dir "${CCP_TEST_PLUGIN_DIR:-$HOME/Desktop/projects/cc-unii-memory/plugin}" "${(@)args:#-test}")
+    local root="${CCP_TEST_DIR:-$HOME/Desktop/projects/cc-unii-memory}"
+    args=(--plugin-dir "$root/plugin" --plugin-dir "$root/trigger" "${(@)args:#-test}")
     ANTHROPIC_AUTH_TOKEN="$CLIPROXY_KEY_CC" cc_fast_run _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "${args[@]}"
     return
   fi
