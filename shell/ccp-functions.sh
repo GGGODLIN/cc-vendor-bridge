@@ -109,6 +109,21 @@ _ccp_configure_split_auth() {
 _ccp_run_claude() {
   local launcher="$1"
   shift
+  local -a args=("$@")
+  if (( ${args[(Ie)-test]} )); then
+    # -test loads the cc-unii memory experiment. A claude.ai Team login seats the
+    # org's security plugin, which skips every user plugin's session.compact hook,
+    # so this session runs on the relay key instead of the claude.ai login. This
+    # runs inside cc_fast_run's subshell, so the token does not leak to the shell.
+    if [[ -z "${CLIPROXY_KEY_CC-}" ]]; then
+      print -u2 -- '[ccp] -test needs CLIPROXY_KEY_CC (this launcher did not load the relay keys)'
+      return 1
+    fi
+    local root="${CCP_TEST_DIR:-$HOME/Desktop/projects/cc-unii-memory}"
+    args=(--plugin-dir "$root/plugin" --plugin-dir "$root/trigger" "${(@)args:#-test}")
+    export ANTHROPIC_AUTH_TOKEN="$CLIPROXY_KEY_CC"
+  fi
+  set -- "${args[@]}"
   if _ccp_model_map_preview; then
     python3 "${CCP_MODEL_MAP_BIN:-${_CC_VENDOR_BRIDGE_DIR}/bin/ccp-model-map}" --capture -- "$@"
     return
@@ -122,20 +137,6 @@ _ccp_run_claude() {
 }
 
 _cc_vendor_claude() {
-  local -a args=("$@")
-  if (( ${args[(Ie)-test]} )); then
-    # -test loads the cc-unii memory experiment. A claude.ai Team login seats the
-    # org's security plugin, which skips every user plugin's session.compact hook,
-    # so this session runs on the relay key instead of the claude.ai login.
-    if [[ -z "${CLIPROXY_KEY_CC-}" ]]; then
-      print -u2 -- '[ccp] -test needs CLIPROXY_KEY_CC (this launcher did not load the relay keys)'
-      return 1
-    fi
-    local root="${CCP_TEST_DIR:-$HOME/Desktop/projects/cc-unii-memory}"
-    args=(--plugin-dir "$root/plugin" --plugin-dir "$root/trigger" "${(@)args:#-test}")
-    ANTHROPIC_AUTH_TOKEN="$CLIPROXY_KEY_CC" cc_fast_run _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "${args[@]}"
-    return
-  fi
   cc_fast_run _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "$@"
 }
 
