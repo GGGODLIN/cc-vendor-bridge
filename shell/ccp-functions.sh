@@ -140,6 +140,17 @@ _cc_vendor_claude() {
   cc_fast_run _ccp_run_claude "${CC_CLAUDE_BIN:-claude}" "$@"
 }
 
+# `pi -test` matches the ccp-* and pi-* launchers: a leading -test loads the
+# cc-unii memory experiment's pi extension; anything else goes to pi untouched.
+pi() {
+  if [[ "${1-}" == -test ]]; then
+    shift
+    command pi --extension "${CCP_TEST_DIR:-$HOME/Desktop/projects/cc-unii-memory}/pi/unii.ts" "$@"
+  else
+    command pi "$@"
+  fi
+}
+
 # GPT tier → current version. Launchers reference tiers only; the table itself lives outside this
 # repo because hooks, watchers and other non-ccp callers must bump in the same place.
 CCP_GPT_MODELS_FILE=${CCP_GPT_MODELS_FILE:-$HOME/.claude/config/gpt-models.env}
