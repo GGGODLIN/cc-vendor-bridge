@@ -11,6 +11,12 @@ cc_fast_run() (
   fi
   shift
 
+  # 清除從上層常駐服務或舊版 herdr 繼承的殘留 child-session 與舊 pane 變數，避免觸發 nested_marker 關閉 .jsonl 轉錄檔寫入。
+  unset CLAUDECODE CLAUDE_PID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID \
+    CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CODEX_COMPANION_SESSION_ID
+  [[ -n "${HC_TERMINAL_ID:-}" ]] && unset HERDR_ENV HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH
+  export CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1
+
   # 分隔啟動器預設參數與使用者參數，不誤吞 prompt 裡的 -fast / -bot。
   local bot_selected=0
   while [[ "${1:-}" == -fast || "${1:-}" == --fast || "${1:-}" == -bot || "${1:-}" == --bot ]]; do
@@ -36,7 +42,7 @@ cc_fast_run() (
   if (( bot_selected )); then
     export PERSONAL_BOT_SESSION=1
     local bot_bin="${PERSONAL_BOT_BIN:-$HOME/Desktop/projects/personal-bot/bin/personal-bot}"
-    if [[ -n "${HERDR_PANE_ID:-}" && -x "$bot_bin" ]]; then
+    if [[ ( -n "${HERDR_PANE_ID:-}" || -n "${HC_TERMINAL_ID:-}" ) && -x "$bot_bin" ]]; then
       "$bot_bin" register-session >/dev/null 2>&1 || true
     fi
   fi
