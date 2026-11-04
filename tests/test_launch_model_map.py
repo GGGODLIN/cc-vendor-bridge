@@ -163,6 +163,36 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     self.assertEqual(record["base_url"], "http://127.0.0.1:8318")
     self.assertTrue(record["relay_auth"])
 
+  def test_un_launch_pins_models_limits_auth_and_preserves_arguments(self):
+    slots = ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+             "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL")
+    env = self.env | dict.fromkeys(slots, "gpt-outer(max)") | {
+      "ANTHROPIC_API_KEY": "OUTER-CREDENTIAL-CANARY",
+      "ANTHROPIC_AUTH_TOKEN": "OUTER-AUTH-CANARY",
+      "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
+      "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "900000",
+    }
+    args = ["--resume", "session with spaces", "-p", ""]
+    status, output, errors = self.launch("ccp-un", args, terminal=False, env=env | {"CCP_CLAUDE_OAUTH_PRESENT": "1"})
+    self.assertEqual(status, 0, output + errors)
+    record, = self.read_records()
+    self.assertEqual(record["slots"], ["group/un:high"] * 6)
+    self.assertEqual(record["limits"], ["32000", "480000"])
+    self.assertEqual(record["base_url"], "http://127.0.0.1:8318")
+    self.assertTrue(record["split_auth"])
+    self.assertEqual(record["argv"], ["--model", "group/un:high", "--disallowed-tools", "WebSearch", *args])
+    self.assertNotIn("CREDENTIAL-CANARY", output + errors)
+    self.assertNotIn("UNEXPECTED-SERVICE-START", output + errors)
+    self.assertFalse((self.fixture / "service-starts").exists())
+
+  def test_un_missing_relay_aborts_without_starting_any_service_or_claude(self):
+    with self.stubs.open("a") as source:
+      source.write("function /usr/bin/nc { return 1; }\n")
+    status, output, errors = self.launch("ccp-un", terminal=False)
+    self.assertEqual(status, 1, output + errors)
+    self.assertIn("relay :8317 not listening", errors)
+    self.assertFalse(self.records.exists())
+
   def test_ds_free_missing_relay_aborts_without_starting_any_service_or_claude(self):
     with self.stubs.open("a") as source:
       source.write("function /usr/bin/nc { return 1; }\n")

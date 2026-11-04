@@ -13,7 +13,7 @@ SOURCE = ROOT / "shell" / "ccp-functions.sh"
 ENTRIES = (
   "cc-luna", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
   "ccp-mix-gpt", "ccp-mix-sol", "ccp-free", "ccp-gemini-pro", "ccp-gemini-flash", "ccp-grok",
-  "ccp-gemini-argon", "ccp-ds-free",
+  "ccp-gemini-argon", "ccp-ds-free", "ccp-un",
   "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
 )
 VERSIONS = "GPT_ASTRA=gpt-test-astra\nGPT_SOL=gpt-test-sol\nGPT_LUNA=gpt-test-luna\n"
@@ -125,6 +125,14 @@ class ModelMapTest(unittest.TestCase):
     result = self.run_cli(script="ccp-ds-free", env=env)
     self.assertEqual(result.returncode, 0, result.stderr)
     self.assertEqual(json.loads(result.stdout)["slots"], ["group/ds-free:max"] * 6)
+
+  def test_un_preview_pins_all_six_slots_despite_outer_gpt_models(self):
+    slots = ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+             "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL")
+    env = self.env | dict.fromkeys(slots, "gpt-outer(max)") | {"CCP_MODEL_MAP_PREVIEW": "1"}
+    result = self.run_cli(script="ccp-un", env=env)
+    self.assertEqual(result.returncode, 0, result.stderr)
+    self.assertEqual(json.loads(result.stdout)["slots"], ["group/un:high"] * 6)
 
   def test_query_entry_is_first_and_other_defaults_ignore_outer_environment(self):
     env = self.env | {

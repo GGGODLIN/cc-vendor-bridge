@@ -1481,6 +1481,39 @@ ccp-ds-free() {
   )
 }
 
+# Refuseless abliterated DeepSeek V4.1 Flash 1017 through Magpie group/un.
+# The free model is 512K, so the CC cap leaves room for Refuseless's injected
+# identity prompt. :high, not :max, because the free promo credit is about $1.
+# A free account serves one request at a time; Magpie queues the rest
+# (account-concurrency 1, queue 20 × 600s) instead of passing on its 429.
+ccp-un() {
+  if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
+    print -P "%F{red}[ccp-un] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
+    return 1
+  fi
+  _ccp_ensure_split_proxy || return 1
+  (
+    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env || exit 1
+    if ! _ccp_model_map_preview && [[ -z "${CLIPROXY_BASE_URL-}" || -z "${CLIPROXY_KEY_CC-}" ]]; then
+      print -P "%F{red}[ccp-un] keys file must define CLIPROXY_BASE_URL and CLIPROXY_KEY_CC%f" >&2
+      exit 1
+    fi
+    export CC_VENDOR=un
+    _ccp_configure_split_auth
+    export ANTHROPIC_MODEL='group/un:high'
+    export ANTHROPIC_DEFAULT_FABLE_MODEL='group/un:high'
+    export ANTHROPIC_DEFAULT_OPUS_MODEL='group/un:high'
+    export ANTHROPIC_DEFAULT_SONNET_MODEL='group/un:high'
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL='group/un:high'
+    export CLAUDE_CODE_SUBAGENT_MODEL='group/un:high'
+    export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
+    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=480000
+    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
+    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
+  )
+}
+
 # ===== CLIProxyAPI relay, Grok 4.7 via xAI OAuth (qwe70302 SuperGrok Heavy) =====
 # The account is a resold Heavy plan billed through Google Play and expires 2026-10-30;
 # after that the xai auth file stays on disk but every request fails, so the preflight
