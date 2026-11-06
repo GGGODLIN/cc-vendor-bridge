@@ -13,7 +13,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ENTRIES = (
-  "cc-luna", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
+  "cc-luna", "cc-terra", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
   "ccp-mix-gpt", "ccp-mix-sol", "ccp-free", "ccp-gemini-pro", "ccp-gemini-flash", "ccp-grok",
   "ccp-gemini-argon", "ccp-ds-free", "ccp-un",
   "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
@@ -156,7 +156,7 @@ def versions_error():
       if line.startswith("GPT_") and "=" in line:
         key, value = line.split("=", 1)
         values[key] = value
-    required = ("GPT_ASTRA", "GPT_SOL", "GPT_LUNA")
+    required = ("GPT_ASTRA", "GPT_SOL", "GPT_TERRA", "GPT_LUNA")
     if not all(values.get(key) for key in required):
       return f"{path}：未知，版本表缺少型號"
     if not all(re.fullmatch(r"[A-Za-z0-9._/-]+", values[key]) for key in required):
@@ -200,10 +200,10 @@ def render(active=None, launch=False, cli_args=()):
     except ValueError as error:
       errors.append(str(error))
       slots = [UNKNOWN] * len(SLOTS)
-    if entry in ("cc-luna", "cc-free"):
+    if entry in ("cc-luna", "cc-terra", "cc-free"):
       slots[1:3] = [slots[1] or "原生 Fable", slots[2] or "原生 Opus"]
     shown = [value or "未另設" for value in slots[:5]]
-    if version_error and entry in ("ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast", "ccp-mix-gpt", "ccp-mix-sol", "ccp-bruce", "cc-luna"):
+    if version_error and entry in ("ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast", "ccp-mix-gpt", "ccp-mix-sol", "ccp-bruce", "cc-luna", "cc-terra"):
       shown = [UNKNOWN] * 5
     label = entry
     if entry == active:

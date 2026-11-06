@@ -11,12 +11,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "shell" / "ccp-functions.sh"
 ENTRIES = (
-  "cc-luna", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
+  "cc-luna", "cc-terra", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
   "ccp-mix-gpt", "ccp-mix-sol", "ccp-free", "ccp-gemini-pro", "ccp-gemini-flash", "ccp-grok",
   "ccp-gemini-argon", "ccp-ds-free", "ccp-un",
   "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
 )
-VERSIONS = "GPT_ASTRA=gpt-test-astra\nGPT_SOL=gpt-test-sol\nGPT_LUNA=gpt-test-luna\n"
+VERSIONS = "GPT_ASTRA=gpt-test-astra\nGPT_SOL=gpt-test-sol\nGPT_TERRA=gpt-test-terra\nGPT_LUNA=gpt-test-luna\n"
 RELAY = """openai-compatibility:
   - name: cline-low
     priority: 1
@@ -54,7 +54,7 @@ def table_rows(output):
     cells = [cell.strip() for cell in line.split("|")[1:-1]]
     if not cells:
       continue
-    entry = re.search(r"\b(ccp-[a-z-]+|cc-luna|cc-free)\b", cells[0])
+    entry = re.search(r"\b(ccp-[a-z-]+|cc-luna|cc-terra|cc-free)\b", cells[0])
     if entry:
       rows.append((entry.group(1), cells))
   return rows
@@ -261,7 +261,7 @@ class ModelMapTest(unittest.TestCase):
     (legacy / "bin").mkdir(parents=True)
     marker = self.fixture / "unexpected-launch"
     (legacy / "bin/cc-split-lib.sh").write_text("# legacy launcher without readonly preview\n")
-    for entry in ("cc-luna", "cc-free"):
+    for entry in ("cc-luna", "cc-terra", "cc-free"):
       (legacy / "bin" / entry).write_text(f"#!/bin/bash\nprintf launched > {shlex.quote(str(marker))}\n")
     result = self.run_cli(env=self.env | {"CCP_SPLIT_ROOT": str(legacy)})
     self.assertNotEqual(result.returncode, 0)
