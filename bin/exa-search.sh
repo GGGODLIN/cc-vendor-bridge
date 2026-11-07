@@ -25,27 +25,53 @@ if [ -z "$QUERY" ]; then
   exit 1
 fi
 
-KEY=$(security find-generic-password -s EXA_API_KEY -w 2>/dev/null)
-if [ -z "$KEY" ]; then
-  echo "ERROR: EXA_API_KEY not in macOS keychain" >&2
-  echo "Add it with: security add-generic-password -s EXA_API_KEY -a \"\$USER\" -U -w" >&2
+KEY=$(security find-generic-password -s EXA_API_KEY -w 2>/dev/null || true)
+TAVILY_KEY_FILE="$HOME/.config/tavily/api-key"
+TAVILY_KEY=""
+if [ -f "$TAVILY_KEY_FILE" ]; then
+  TAVILY_KEY=$(tr -d '\n\r ' < "$TAVILY_KEY_FILE" 2>/dev/null || true)
+fi
+
+if [ -z "$KEY" ] && [ -z "$TAVILY_KEY" ]; then
+  echo "ERROR: Neither EXA_API_KEY (keychain) nor ~/.config/tavily/api-key found" >&2
   exit 2
 fi
 
 bodyfile=$(mktemp /tmp/exa-body.XXXX)
 trap 'rm -f "$bodyfile"' EXIT
 
-payload=$(jq -n --arg q "$QUERY" --argjson n "$N" \
-  '{query:$q, type:"auto", numResults:$n, contents:{highlights:true}}')
+status=0
+used_engine=""
 
-status=$(curl -sS -o "$bodyfile" -w "%{http_code}" \
-  -X POST "https://api.exa.ai/search" \
-  -H "x-api-key: $KEY" \
-  -H "Content-Type: application/json" \
-  --max-time 30 \
-  -d "$payload")
+if [ -n "$KEY" ] && [ "${EXA_FORCE_FALLBACK:-0}" != "1" ]; then
+  payload=$(jq -n --arg q "$QUERY" --argjson n "$N" \
+    '{query:$q, type:"auto", numResults:$n, contents:{highlights:true}}')
+  status=$(curl -sS -o "$bodyfile" -w "%{http_code}" \
+    -X POST "https://api.exa.ai/search" \
+    -H "x-api-key: $KEY" \
+    -H "Content-Type: application/json" \
+    --max-time 30 \
+    -d "$payload" 2>/dev/null || echo 000)
+  if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+    used_engine="exa"
+  fi
+fi
 
-if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+if [ -z "$used_engine" ] && [ -n "$TAVILY_KEY" ]; then
+  t_payload=$(jq -n --arg q "$QUERY" --argjson n "$N" \
+    '{query:$q, search_depth:"basic", max_results:$n}')
+  status=$(curl -sS -o "$bodyfile" -w "%{http_code}" \
+    -X POST "https://api.tavily.com/search" \
+    -H "Authorization: Bearer $TAVILY_KEY" \
+    -H "Content-Type: application/json" \
+    --max-time 30 \
+    -d "$t_payload" 2>/dev/null || echo 000)
+  if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+    used_engine="tavily"
+  fi
+fi
+
+if [ -z "$used_engine" ]; then
   echo "ERROR: HTTP $status" >&2
   cat "$bodyfile" >&2
   echo >&2
@@ -64,9 +90,11 @@ jq -r '
   | to_entries[]
   | "[\(.key + 1)] \(.value.title // "(no title)")"
     + "\n    URL: \(.value.url)"
-    + (if .value.publishedDate then "\n    Date: \(.value.publishedDate)" else "" end)
+    + (if (.value.publishedDate // .value.published_date) then "\n    Date: \(.value.publishedDate // .value.published_date)" else "" end)
     + (if (.value.highlights // []) | length > 0
          then "\n    > " + (.value.highlights[0] | gsub("\n+"; " "))
-         else "" end)
+       elif (.value.content // "") != ""
+         then "\n    > " + ((.value.content | gsub("\n+"; " "))[:280])
+       else "" end)
     + "\n"
 ' "$bodyfile"
