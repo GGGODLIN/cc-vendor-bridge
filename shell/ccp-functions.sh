@@ -1282,160 +1282,40 @@ ccp-sol() {
   )
 }
 
-# ===== CLIProxyAPI relay, Gemini via Antigravity OAuth (qwe70301 AI Pro) =====
-# Split into two entry points because the Pro and Flash tiers draw on the same
-# subscription quota at very different rates — keeping them separate makes the
-# choice explicit at launch instead of buried in a slot table.
-#
-# Effort control (2026-08-07 probe, 3 rounds, stable):
-#   Model-name suffix WORKS — 'gemini-pro-agent(high)' and '(xhigh)' reliably
-#   produce thinking blocks (1532-1602 / 1320-1452 chars); bare name and '(low)'
-#   produce none (0/0/0). Parsed by CLIProxyAPI's reasoningEffortFromSuffix.
-#   CC's own effort selector does NOT work — output_config.effort={low,medium,
-#   high,xhigh} all yield 0 thinking chars; the relay strips reasoning effort for
-#   models with no thinking levels in its registry. So CLAUDE_CODE_ALWAYS_ENABLE_EFFORT
-#   is deliberately left off here: the picker would render but change nothing.
-#   high vs xhigh showed no consistent gap — Antigravity looks binary (on/off).
-#
-# Context window: 1,048,576 hard cap, stated verbatim by the upstream reject
-# ("exceeds the maximum number of tokens allowed 1048576") and confirmed by probe
-# (1,045,010 accepted / above it rejected). Same ceiling on Pro and Flash. That is
-# still above the 922k Codex ceiling (2026-08-17), so Skill(claude-api) is NOT blocked here.
-#
-# Per-call override:
-#   ANTHROPIC_MODEL='gemini-pro-agent(xhigh)' ccp-gemini-pro
-#   ANTHROPIC_MODEL=gemini-3.1-pro-low ccp-gemini-pro   # cheaper Pro brain
-
-# Shared pre-flight: relay liveness + Antigravity credential visibility. Every
-# Gemini model hangs off a single OAuth account (unlike ccp-gpt's two Codex
-# accounts), so surface which one is carrying the session before launch.
-_ccp-gemini-preflight() {
-  _ccp_model_map_preview && return 0
-  local caller=$1
-  if [[ ! -f ~/.cli-proxy-api/keys.env ]]; then
-    echo "$caller: ~/.cli-proxy-api/keys.env not found. See cliproxyapi-setup/CLAUDE.md" >&2
-    return 1
-  fi
-  if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
-    echo "[$caller] relay not listening, kickstarting launchd service..." >&2
-    launchctl kickstart "gui/$UID/com.philip.cli-proxy-api" 2>/dev/null
-    local i=0
-    while (( i < 50 )); do
-      /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null && break
-      sleep 0.1; ((i++))
-    done
-    if (( i >= 50 )); then
-      print -P "%F{red}[$caller] relay did not become ready in 5s — check ~/.cli-proxy-api/logs/%f" >&2
-      return 1
-    fi
-  fi
-
-  local -a auths=(${HOME}/.cli-proxy-api/antigravity-*.json(N))
-  if (( ${#auths} == 0 )); then
-    print -P "%F{red}[$caller] 找不到 Antigravity 憑證 — Gemini 全線不可用%f" >&2
-    print -P "%F{red}          重登：~/.cli-proxy-api/bin/cli-proxy-api --config ~/.cli-proxy-api/config.yaml --antigravity-login%f" >&2
-    return 1
-  fi
-
-  if command -v jq >/dev/null 2>&1; then
-    local email disabled expired
-    email=$(jq -r '.email // "?"'     "${auths[1]}" 2>/dev/null)
-    disabled=$(jq -r '.disabled // false' "${auths[1]}" 2>/dev/null)
-    expired=$(jq -r '.expired // "?"'  "${auths[1]}" 2>/dev/null)
-    if [[ "$disabled" == "true" ]]; then
-      print -P "%F{red}[$caller] Antigravity 帳號 $email 被停用中 — 這次會直接失敗%f" >&2
-      return 1
-    fi
-    print -P "%F{green}[$caller] 服務中：$email%f（憑證到期 ${expired}，relay 常駐時會自動續）" >&2
-  fi
-  return 0
-}
-
-# Pro tier — Gemini 3.1 Pro High. Thinking on by default via the (high) suffix.
-ccp-gemini-pro() {
-  _ccp-gemini-preflight ccp-gemini-pro || return 1
-  _ccp_ensure_split_proxy || return 1
-  (
-    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    export CC_VENDOR=gemini-pro
-    _ccp_configure_split_auth
-    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gemini-pro-agent(high)}"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gemini-pro-agent(high)}"
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gemini-pro-agent(high)}"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gemini-pro-agent}"
-    # HAIKU slot stays on Flash: background summarisation does not need Pro quota.
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gemini-3.5-flash-low}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-gemini-3.1-pro-low}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Gemini 3.1 Pro Low}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Cheaper Pro brain, thinking off}"
-    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-gemini-pro-agent}"
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
-    # Same 22k gap ccp-gpt leaves for compact overshoot; no Gemini overshoot
-    # sample exists yet, so this is borrowed rather than measured.
-    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
-    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    # WebSearch: same unprobed relay translation path as ccp-gpt
-    # (docs/caveats.md §13b). Unlike ccp-gpt, Skill(claude-api) stays allowed —
-    # its ~200k-token injection fits the 1M window.
-    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
-  )
-}
-
-# Flash tier — same 1M window, a fraction of the quota burn. Thinking off by
-# default; append (high) to any slot to turn it on.
-ccp-gemini-flash() {
-  _ccp-gemini-preflight ccp-gemini-flash || return 1
-  _ccp_ensure_split_proxy || return 1
-  (
-    _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    export CC_VENDOR=gemini-flash
-    _ccp_configure_split_auth
-    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-gemini-3.7-flash-high}"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-gemini-3.7-flash-high}"
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-gemini-3.7-flash-high}"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-gemini-3.7-flash-high}"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-gemini-3.7-flash-high}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION:-gemini-3.7-flash-high(high)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-Gemini 3.7 Flash Thinking}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Same Flash model with reasoning turned on}"
-    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-gemini-3.7-flash-high}"
-    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
-    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
-    export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
-    export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
-    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
-  )
-}
-
-# ===== Magpie relay, Gemini 4 Argon on a friend's paid Google key (2026-10-16) =====
+# ===== Magpie relay, Gemini on a friend's paid Google key (2026-10-16; roles 2026-11-11) =====
 # The key sits in Magpie's `google` provider and is billed per token to its owner
 # ($2 in / $10 out per 1M, promo price), so every slot — Haiku included, by the
 # user's choice — spends that key.
-# Argon only has low/medium/high thinking. Magpie takes the level as a ":high" suffix;
+# ccp-gemini-pro / ccp-gemini-flash pick Magpie's role groups `gemini-pro` and
+# `gemini-flash`, so a new Gemini generation is swapped in Magpie
+# (`magpie group set gemini-pro models=…`) without touching any caller;
+# ccp-gemini-argon stays pinned to Argon on purpose, as the fallback launcher.
+# Gemini 4 only has low/medium/high thinking. Magpie takes the level as a ":high" suffix;
 # the CPA-style "(high)" is forwarded verbatim and Google rejects it with 400.
 # The key reports outputTokenLimit 32768, below CC's default for unknown models, so
 # a longer reply would be cut off without the explicit cap.
 # Magpie is the shared entry for every session, so the preflight only checks that
 # 8317 answers and never restarts anything.
-ccp-gemini-argon() {
+_ccp_gemini_magpie() {
+  local name="$1" vendor="$2" model="$3"
+  shift 3
   _ccp_model_map_preview || {
     if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
-      print -P "%F{red}[ccp-gemini-argon] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
+      print -P "%F{red}[$name] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
       return 1
     fi
   }
   _ccp_ensure_split_proxy || return 1
   (
     _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
-    export CC_VENDOR=gemini-argon
+    export CC_VENDOR="$vendor"
     _ccp_configure_split_auth
-    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-google/gemini-4-argon:high}"
-    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-google/gemini-4-argon:high}"
-    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-google/gemini-4-argon:high}"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-google/gemini-4-argon:high}"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-google/gemini-4-argon:high}"
-    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-google/gemini-4-argon:high}"
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-$model}"
+    export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-$model}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$model}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$model}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-$model}"
     export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-32768}
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     # Same ~22k compact gap as the other Gemini launchers; no Argon overshoot sample yet.
@@ -1450,6 +1330,10 @@ ccp-gemini-argon() {
     _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
   )
 }
+
+ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro:high' "$@"; }
+ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash:high' "$@"; }
+ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon:high' "$@"; }
 
 # Zen caps output at 32000 while WorkBuddy allows 128000; use the shared ceiling
 # so a relay fallback does not inherit an unsupported output budget.
