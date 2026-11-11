@@ -75,9 +75,9 @@ Each function uses a subshell so env vars don't leak into your main shell. Your 
 
 ## 無審查入口
 
-`ccp-un` 的六槽固定使用 `group/un:high`。這個 Magpie 群組目前只有 Refuseless 的 `deepseek-v4.1-flash-abliterated-free`（拿掉拒答的 DeepSeek V4.1 Flash 1017）。免費模型 context 是 512K，所以 CC 上限設 480000；output 32000。
+`ccp-un` 的六槽固定使用 `group/un:high`。這個 Magpie 群組目前由 BazaarLink 的 4 顆無審查模型依序服務（`deepseek-v4.1-flash-1017-abliterated`、`glm-5.3-flash-abliterated`、`glm-5.3-abliterated`、`qwen3.8-27b-abliterated-cyber`）。配合池內 512K 模型上限，CC context 上限設 480000；output 32000。
 
-Refuseless 免費帳號一次只跑一個請求，Magpie 對這把 key 設了並發 1、排隊 20 筆、每筆最多等 600 秒，CC 同時送出的背景請求會排隊，不會直接收到 429。Refuseless 會在請求前加一段身分提示，隱私政策也不保證零保留，所以不要拿它處理含秘密的 repo。
+部分上游無審查模型會在請求前注入身分提示，第三方推論商亦不保證零保留，所以不要拿它處理含秘密的 repo。
 
 ## 即時模型映射表
 

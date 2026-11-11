@@ -1365,11 +1365,9 @@ ccp-ds-free() {
   )
 }
 
-# Refuseless abliterated DeepSeek V4.1 Flash 1017 through Magpie group/un.
-# The free model is 512K, so the CC cap leaves room for Refuseless's injected
-# identity prompt. :high, not :max, because the free promo credit is about $1.
-# A free account serves one request at a time; Magpie queues the rest
-# (account-concurrency 1, queue 20 × 600s) instead of passing on its 429.
+# BazaarLink abliterated pool through Magpie group/un (ordered 4-model chain).
+# Keep the 480K CC context cap so the 512K DeepSeek V4.1 Flash 1017 leg still leaves
+# room for upstream injected identity prompts, and use :high to conserve promo credit.
 ccp-un() {
   if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
     print -P "%F{red}[ccp-un] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
