@@ -220,9 +220,9 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     self.assertEqual(status, 0, output)
     rows = dict(table_rows(output))
     self.assertIn("ccp-sol", rows, "缺少本次啟動列")
-    self.assertEqual(rows["ccp-sol"][1], "gpt-test-luna(max)")
+    self.assertEqual(rows["ccp-sol"][1], "gpt-test-terra(max)")
     record = self.read_records()[0]
-    self.assertEqual(record["slots"][3], "gpt-test-luna(max)")
+    self.assertEqual(record["slots"][3], "gpt-test-terra(max)")
     self.assertEqual(record["argv"][-2:], ["--model", "sonnet"])
 
   def test_print_machine_output_and_service_modes_do_not_insert_a_table(self):
@@ -242,14 +242,14 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
 
   def test_same_shell_launch_reloads_models_for_table_and_cc_together(self):
     newer = self.fixture / "new.env"
-    newer.write_text(VERSIONS.replace("gpt-test-sol", "gpt-new-sol").replace("gpt-test-luna", "gpt-new-luna"))
+    newer.write_text(VERSIONS.replace("gpt-test-sol", "gpt-new-sol").replace("gpt-test-terra", "gpt-new-terra"))
     script = f"ccp-sol; cp {shlex.quote(str(newer))} {shlex.quote(str(self.versions))}; ccp-sol"
     status, output, _ = self.launch("ccp-sol", script=script)
     self.assertEqual(status, 0, output)
     rows = [cells for name, cells in table_rows(output) if name == "ccp-sol"]
     self.assertEqual([row[1] for row in rows], ["gpt-test-sol", "gpt-new-sol"])
     self.assertEqual([row["slots"][0] for row in self.read_records()], ["gpt-test-sol", "gpt-new-sol"])
-    self.assertEqual(self.read_records()[1]["slots"][3], "gpt-new-luna(max)")
+    self.assertEqual(self.read_records()[1]["slots"][3], "gpt-new-terra(max)")
 
   def test_partial_version_update_keeps_existing_launch_atomic_and_marks_unknown(self):
     partial = self.fixture / "partial.env"
@@ -259,7 +259,7 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     self.assertEqual(status, 0, output)
     records = self.read_records()
     self.assertEqual(records[1]["slots"][0], "gpt-test-sol")
-    self.assertEqual(records[1]["slots"][3], "gpt-test-luna(max)")
+    self.assertEqual(records[1]["slots"][3], "gpt-test-terra(max)")
     rows = [cells for name, cells in table_rows(output) if name == "ccp-sol"]
     self.assertEqual(rows[-1][1], "未知")
     self.assertIn("版本表", output)
@@ -311,14 +311,14 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
         self.assertEqual(flag in pairs, expected, argv)
 
   def test_opus_maps_to_sol_without_fast_by_default(self):
-    for entry in ("ccp-gpt", "ccp-sol"):
+    for entry, fleet in (("ccp-gpt", "gpt-test-luna(max)"), ("ccp-sol", "gpt-test-terra(max)")):
       with self.subTest(entry=entry):
         self.records.unlink(missing_ok=True)
         status, output, _ = self.launch(entry)
         self.assertEqual(status, 0, output)
         record = self.read_records()[0]
         self.assertFalse(record["fast"])
-        self.assertEqual(record["slots"][2:5], ["gpt-test-sol", "gpt-test-luna(max)", "gpt-test-luna(max)"])
+        self.assertEqual(record["slots"][2:5], ["gpt-test-sol", fleet, fleet])
 
   def test_narrow_terminal_preserves_complete_launcher_names(self):
     env = self.env | {"COLUMNS": "80"}

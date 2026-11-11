@@ -159,11 +159,11 @@ _ccp_refresh_gpt_models() {
   [[ "${_CCP_GPT_REFRESHED:-0}" == 1 ]] && return 0
   local assignments
   if ! assignments=$(
-    unset GPT_ASTRA GPT_SOL GPT_LUNA GPT_WEB_SOL GPT_WEB_PRO
+    unset GPT_ASTRA GPT_SOL GPT_TERRA GPT_LUNA GPT_WEB_SOL GPT_WEB_PRO
     source "$CCP_GPT_MODELS_FILE" >/dev/null || exit 1
-    [[ -n "${GPT_ASTRA-}" && -n "${GPT_SOL-}" && -n "${GPT_LUNA-}" ]] || exit 1
+    [[ -n "${GPT_ASTRA-}" && -n "${GPT_SOL-}" && -n "${GPT_TERRA-}" && -n "${GPT_LUNA-}" ]] || exit 1
     local key
-    for key in GPT_ASTRA GPT_SOL GPT_LUNA GPT_WEB_SOL GPT_WEB_PRO; do
+    for key in GPT_ASTRA GPT_SOL GPT_TERRA GPT_LUNA GPT_WEB_SOL GPT_WEB_PRO; do
       if (( ${+parameters[$key]} )); then
         print -r -- "$key=${(qqq)${(P)key}}"
       fi
@@ -1263,10 +1263,9 @@ ccp-gpt-smart() {
   )
 }
 
-# Put the Sol tier (the pre-Astra flagship tier) on the flagship seats without
-# editing ccp-gpt. Every slot in ccp-gpt reads ${VAR:-default}, so presetting them
-# here is enough — same delegation pattern as ccp-gpt-smart. Opus/Sonnet/Haiku follow
-# ccp-gpt's defaults, so they are deliberately absent here.
+# Put the Sol tier (the pre-Astra flagship tier) on the flagship seats and Terra(max)
+# on Sonnet/Haiku without editing ccp-gpt. Every slot in ccp-gpt reads ${VAR:-default},
+# so presetting them here is enough; Sonnet/Haiku honor explicit caller overrides first.
 # For the Sol fast tier: ccp-sol --fast
 ccp-sol() {
   if ! _ccp_refresh_gpt_models && _ccp_model_map_preview; then
@@ -1276,6 +1275,8 @@ ccp-sol() {
   (
     ANTHROPIC_MODEL=$GPT_SOL \
     ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_SOL \
+    ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-${GPT_TERRA}(max)}" \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${GPT_TERRA}(max)}" \
     ANTHROPIC_CUSTOM_MODEL_OPTION=${GPT_SOL}-fast \
     ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="$(_ccp_gpt_label "$GPT_SOL") Fast" \
       ccp-gpt "$@"

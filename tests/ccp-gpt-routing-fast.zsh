@@ -8,7 +8,7 @@ trap '/bin/rm -rf -- "$TEST_FIXTURE"' EXIT
 export CCP_GPT_MODELS_FILE="$TEST_FIXTURE/models.env"
 export CC_LUNA_MODELS_FILE="$CCP_GPT_MODELS_FILE"
 export CCP_FREE_CONFIG_FILE="$TEST_FIXTURE/relay.yaml"
-printf '%s\n' 'GPT_ASTRA=gpt-6-astra' 'GPT_SOL=gpt-6-sol' 'GPT_LUNA=gpt-6-luna' > "$CCP_GPT_MODELS_FILE"
+printf '%s\n' 'GPT_ASTRA=gpt-6-astra' 'GPT_SOL=gpt-6-sol' 'GPT_TERRA=gpt-6-terra' 'GPT_LUNA=gpt-6-luna' > "$CCP_GPT_MODELS_FILE"
 printf '%s\n' 'openai-compatibility: []' > "$CCP_FREE_CONFIG_FILE"
 alias claude='claude --settings '\''{"ultracode": true}'\'''
 source "$ROOT/shell/ccp-functions.sh"
@@ -123,8 +123,8 @@ assert_contains \
 
 assert_eq \
   "GPT tier table points at the current versions" \
-  "gpt-6-astra|gpt-6-sol|gpt-6-luna" \
-  "$GPT_ASTRA|$GPT_SOL|$GPT_LUNA"
+  "gpt-6-astra|gpt-6-sol|gpt-6-terra|gpt-6-luna" \
+  "$GPT_ASTRA|$GPT_SOL|$GPT_TERRA|$GPT_LUNA"
 
 assert_contains \
   "ccp-gpt maps Opus to Sol" \
@@ -227,7 +227,12 @@ if (( ${+functions[ccp-sol]} )); then
   unset CLAUDE_CODE_SUBAGENT_MODEL ANTHROPIC_CUSTOM_MODEL_OPTION ANTHROPIC_CUSTOM_MODEL_OPTION_NAME
 
   assert_eq \
-    "ccp-sol rolls main routing back to Sol and keeps Luna fleet" \
+    "ccp-sol maps Sonnet and Haiku to Terra(max) by default" \
+    "gpt-6-sol|gpt-6-sol||gpt-6-terra(max)|gpt-6-terra(max)||gpt-6-sol-fast|GPT-6 Sol Fast" \
+    "$(ccp-sol)"
+
+  assert_eq \
+    "ccp-sol rolls main routing back to Sol and preserves explicit caller slot overrides" \
     "gpt-6-sol|gpt-6-sol|gpt-6-luna(max)|gpt-6-luna(max)|gpt-6-luna(max)|gpt-6-luna(max)|gpt-6-sol-fast|GPT-6 Sol Fast" \
     "$(ANTHROPIC_DEFAULT_OPUS_MODEL='gpt-6-luna(max)' ANTHROPIC_DEFAULT_SONNET_MODEL='gpt-6-luna(max)' ANTHROPIC_DEFAULT_HAIKU_MODEL='gpt-6-luna(max)' CLAUDE_CODE_SUBAGENT_MODEL='gpt-6-luna(max)' ccp-sol)"
 else

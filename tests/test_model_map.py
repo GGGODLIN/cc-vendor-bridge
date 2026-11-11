@@ -111,7 +111,7 @@ class ModelMapTest(unittest.TestCase):
     rows = table_rows(result.stdout)
     self.assertEqual([name for name, _ in rows], list(ENTRIES))
     cells = dict(rows)["ccp-sol"]
-    self.assertEqual(cells[1:6], ["gpt-test-sol", "gpt-test-sol", "gpt-test-sol", "gpt-test-luna(max)", "gpt-test-luna(max)"])
+    self.assertEqual(cells[1:6], ["gpt-test-sol", "gpt-test-sol", "gpt-test-sol", "gpt-test-terra(max)", "gpt-test-terra(max)"])
     # The user chose an all-Argon launcher, Haiku slot included (2026-10-16).
     self.assertEqual(set(dict(rows)["ccp-gemini-argon"][1:6]), {"google/gemini-4-argon:high"})
     # Pro and Flash name Magpie role groups, so a Gemini generation swap never edits launchers.
