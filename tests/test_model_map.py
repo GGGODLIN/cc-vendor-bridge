@@ -114,8 +114,13 @@ class ModelMapTest(unittest.TestCase):
     self.assertEqual(cells[1:6], ["gpt-test-sol", "gpt-test-sol", "gpt-test-sol", "gpt-test-terra(max)", "gpt-test-terra(max)"])
     # The user chose an all-Argon launcher, Haiku slot included (2026-10-16).
     self.assertEqual(set(dict(rows)["ccp-gemini-argon"][1:6]), {"google/gemini-4-argon:high"})
-    # Pro and Flash name Magpie role groups, so a Gemini generation swap never edits launchers.
-    self.assertEqual(set(dict(rows)["ccp-gemini-pro"][1:6]), {"group/gemini-pro:high"})
+    # Pro and Flash name Magpie role groups, so a Gemini generation swap never edits launchers;
+    # Pro steps Sonnet/Haiku/subagent down to :medium so batch subagents do not exhaust 32768 in thinking.
+    self.assertEqual(
+      dict(rows)["ccp-gemini-pro"][1:6],
+      ["group/gemini-pro:high", "group/gemini-pro:high", "group/gemini-pro:high", "group/gemini-pro:medium", "group/gemini-pro:medium"],
+    )
+    self.assertIn("ccp-gemini-pro=group/gemini-pro:medium", result.stdout)
     self.assertEqual(set(dict(rows)["ccp-gemini-flash"][1:6]), {"group/gemini-flash:high"})
     self.assertNotIn("ccp-glm", [name for name, _ in rows])
     self.assertNotIn("ccp-mimo", [name for name, _ in rows])

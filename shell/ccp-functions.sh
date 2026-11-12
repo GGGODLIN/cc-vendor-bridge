@@ -1298,8 +1298,8 @@ ccp-sol() {
 # Magpie is the shared entry for every session, so the preflight only checks that
 # 8317 answers and never restarts anything.
 _ccp_gemini_magpie() {
-  local name="$1" vendor="$2" model="$3"
-  shift 3
+  local name="$1" vendor="$2" model="$3" sub_model="$4"
+  shift 4
   _ccp_model_map_preview || {
     if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
       print -P "%F{red}[$name] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
@@ -1314,9 +1314,9 @@ _ccp_gemini_magpie() {
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-$model}"
     export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-$model}"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$model}"
-    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-$model}"
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$model}"
-    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-$model}"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-$sub_model}"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$sub_model}"
+    export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-$sub_model}"
     export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-32768}
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     # Same ~22k compact gap as the other Gemini launchers; no Argon overshoot sample yet.
@@ -1332,9 +1332,11 @@ _ccp_gemini_magpie() {
   )
 }
 
-ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro:high' "$@"; }
-ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash:high' "$@"; }
-ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon:high' "$@"; }
+# Carbon at :high can exhaust the 32768 output ceiling in thinking on batch subagents,
+# so Sonnet/Haiku/subagent slots step down to :medium while main/Fable/Opus keep :high.
+ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro:high' 'group/gemini-pro:medium' "$@"; }
+ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash:high' 'group/gemini-flash:high' "$@"; }
+ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon:high' 'google/gemini-4-argon:high' "$@"; }
 
 # Zen caps output at 32000 while WorkBuddy allows 128000; use the shared ceiling
 # so a relay fallback does not inherit an unsupported output budget.
