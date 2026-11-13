@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "shell" / "ccp-functions.sh"
 ENTRIES = (
   "cc-luna", "cc-terra", "cc-free", "ccp-gpt", "ccp-sol", "ccp-gpt-smart", "ccp-gpt-fast",
-  "ccp-mix-gpt", "ccp-mix-sol", "ccp-free", "ccp-gemini-pro", "ccp-gemini-flash", "ccp-grok",
+  "ccp-mix-gpt", "ccp-mix-sol", "ccp-free", "ccp-gemini", "ccp-gemini-pro", "ccp-gemini-flash", "ccp-grok",
   "ccp-gemini-argon", "ccp-ds-free", "ccp-un",
   "ccp-bruce", "ccp-deepseek", "ccp-deepseek-flash", "ccp-deepseek-pro",
 )
@@ -122,6 +122,11 @@ class ModelMapTest(unittest.TestCase):
     )
     self.assertIn("ccp-gemini-pro=group/gemini-pro:medium", result.stdout)
     self.assertEqual(set(dict(rows)["ccp-gemini-flash"][1:6]), {"group/gemini-flash:high"})
+    # The mixed launcher plans on Pro and hands Sonnet/Haiku/subagent work to Flash (2026-11-13).
+    self.assertEqual(
+      dict(rows)["ccp-gemini"][1:6],
+      ["group/gemini-pro:high", "group/gemini-pro:high", "group/gemini-pro:high", "group/gemini-flash:high", "group/gemini-flash:high"],
+    )
     self.assertNotIn("ccp-glm", [name for name, _ in rows])
     self.assertNotIn("ccp-mimo", [name for name, _ in rows])
     self.assertNotIn("ccp-gpt-whoami", [name for name, _ in rows])

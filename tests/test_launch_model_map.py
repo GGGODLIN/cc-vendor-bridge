@@ -163,6 +163,24 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     self.assertEqual(record["base_url"], "http://127.0.0.1:8318")
     self.assertTrue(record["relay_auth"])
 
+  def test_gemini_launchers_pin_output_cap_to_the_flash_or_pro_ceiling(self):
+    # Flash (Hydrogen) answers up to 65536 per reply, Pro/Argon stop at 32768; the mixed
+    # launcher takes Flash's cap so its subagents are not cut at 32768.
+    expected = {
+      "ccp-gemini": (["group/gemini-pro:high"] * 3 + ["group/gemini-flash:high"] * 3, "65536"),
+      "ccp-gemini-flash": (["group/gemini-flash:high"] * 6, "65536"),
+      "ccp-gemini-pro": (["group/gemini-pro:high"] * 3 + ["group/gemini-pro:medium"] * 3, "32768"),
+      "ccp-gemini-argon": (["google/gemini-4-argon:high"] * 6, "32768"),
+    }
+    for entry, (slots, cap) in expected.items():
+      with self.subTest(entry=entry):
+        self.records.unlink(missing_ok=True)
+        status, output, errors = self.launch(entry, ["-p", "x"], terminal=False, env=self.env | {"CCP_CLAUDE_OAUTH_PRESENT": "1"})
+        self.assertEqual(status, 0, output + errors)
+        record, = self.read_records()
+        self.assertEqual(record["slots"], slots)
+        self.assertEqual(record["limits"], [cap, "1048576"])
+
   def test_un_launch_pins_models_limits_auth_and_preserves_arguments(self):
     slots = ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
              "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL")

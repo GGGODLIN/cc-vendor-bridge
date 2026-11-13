@@ -1291,15 +1291,15 @@ ccp-sol() {
 # `gemini-flash`, so a new Gemini generation is swapped in Magpie
 # (`magpie group set gemini-pro models=…`) without touching any caller;
 # ccp-gemini-argon stays pinned to Argon on purpose, as the fallback launcher.
-# Gemini 4 only has low/medium/high thinking. Magpie takes the level as a ":high" suffix;
-# the CPA-style "(high)" is forwarded verbatim and Google rejects it with 400.
-# The key reports outputTokenLimit 32768, below CC's default for unknown models, so
-# a longer reply would be cut off without the explicit cap.
+# Carbon/Argon have low/medium/high thinking; Hydrogen adds xhigh. Magpie takes the level
+# as a ":high" suffix; the CPA-style "(high)" is forwarded verbatim and Google rejects it with 400.
+# The key reports outputTokenLimit 32768 for Carbon/Argon and 65536 for Hydrogen (2026-11-13),
+# so each launcher pins its cap; without it CC's default for unknown models cuts replies off.
 # Magpie is the shared entry for every session, so the preflight only checks that
 # 8317 answers and never restarts anything.
 _ccp_gemini_magpie() {
-  local name="$1" vendor="$2" model="$3" sub_model="$4"
-  shift 4
+  local name="$1" vendor="$2" model="$3" sub_model="$4" cap="$5"
+  shift 5
   _ccp_model_map_preview || {
     if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
       print -P "%F{red}[$name] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
@@ -1317,7 +1317,7 @@ _ccp_gemini_magpie() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-$sub_model}"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$sub_model}"
     export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-$sub_model}"
-    export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-32768}
+    export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-$cap}
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
     # Same ~22k compact gap as the other Gemini launchers; no Argon overshoot sample yet.
     export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
@@ -1334,9 +1334,13 @@ _ccp_gemini_magpie() {
 
 # Carbon at :high can exhaust the 32768 output ceiling in thinking on batch subagents,
 # so Sonnet/Haiku/subagent slots step down to :medium while main/Fable/Opus keep :high.
-ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro:high' 'group/gemini-pro:medium' "$@"; }
-ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash:high' 'group/gemini-flash:high' "$@"; }
-ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon:high' 'google/gemini-4-argon:high' "$@"; }
+ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro:high' 'group/gemini-pro:medium' 32768 "$@"; }
+ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash:high' 'group/gemini-flash:high' 65536 "$@"; }
+ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon:high' 'google/gemini-4-argon:high' 32768 "$@"; }
+# Pro plans, Flash executes (the user's mixed launcher, 2026-11-13): subagents get Flash's
+# 65536 cap and speed. Carbon accepts the larger max_tokens (200 on 2026-11-13) and still
+# stops each reply at its own 32768.
+ccp-gemini() { _ccp_gemini_magpie ccp-gemini gemini 'group/gemini-pro:high' 'group/gemini-flash:high' 65536 "$@"; }
 
 # Zen caps output at 32000 while WorkBuddy allows 128000; use the shared ceiling
 # so a relay fallback does not inherit an unsupported output budget.
