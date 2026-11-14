@@ -1372,7 +1372,7 @@ ccp-ds-free() {
   )
 }
 
-# BazaarLink abliterated pool through Magpie group/un (ordered 4-model chain).
+# BazaarLink + Numes fallback abliterated pool through Magpie group/un (ordered 5-model chain).
 # Keep the 480K CC context cap so the 512K DeepSeek V4.1 Flash 1017 leg still leaves
 # room for upstream injected identity prompts, and use :high to conserve promo credit.
 ccp-un() {
