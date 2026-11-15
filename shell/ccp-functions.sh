@@ -1300,6 +1300,44 @@ ccp-sol() {
 _ccp_gemini_magpie() {
   local name="$1" vendor="$2" model="$3" sub_model="$4" cap="$5"
   shift 5
+  local -a extra_flags=()
+  if [[ "$name" == ccp-gemini ]]; then
+    local ultracode_enabled="${CCP_GEMINI_ULTRACODE:-1}"
+    local non_interactive_arg=0 passthrough=0 arg
+    local -a filtered_args=()
+    for arg in "$@"; do
+      if (( passthrough )); then
+        filtered_args+=("$arg")
+        continue
+      fi
+      case "$arg" in
+        --)
+          passthrough=1
+          filtered_args+=("$arg")
+          ;;
+        --no-ultracode)
+          ultracode_enabled=0
+          ;;
+        -p|--print|--print=*|--output-format|--output-format=*)
+          non_interactive_arg=1
+          passthrough=1
+          filtered_args+=("$arg")
+          ;;
+        -v|--version|-h|--help|mcp|plugin|plugins|auth|doctor|update|upgrade|agents|serve|app-server)
+          non_interactive_arg=1
+          filtered_args+=("$arg")
+          ;;
+        *)
+          filtered_args+=("$arg")
+          ;;
+      esac
+    done
+    set -- "${filtered_args[@]}"
+    # Keep ultracode out of headless -p/non-TTY runs so scripted callers never fan out workflows by surprise.
+    if [[ "$ultracode_enabled" != 0 ]] && (( ! non_interactive_arg )) && [[ -t 0 && -t 1 && -t 2 ]] && ! _ccp_model_map_preview; then
+      extra_flags+=(--settings '{"ultracode": true}')
+    fi
+  fi
   _ccp_model_map_preview || {
     if ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
       print -P "%F{red}[$name] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
@@ -1328,7 +1366,7 @@ _ccp_gemini_magpie() {
     export CLAUDE_CODE_RETRY_WATCHDOG=${CLAUDE_CODE_RETRY_WATCHDOG:-1}
     export ENABLE_TOOL_SEARCH=${ENABLE_TOOL_SEARCH:-auto}
     # WebSearch: same unprobed relay translation path as ccp-gpt (docs/caveats.md §13b).
-    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch -- "$@"
+    _cc_vendor_claude --model "$ANTHROPIC_MODEL" --disallowed-tools WebSearch "${extra_flags[@]}" -- "$@"
   )
 }
 

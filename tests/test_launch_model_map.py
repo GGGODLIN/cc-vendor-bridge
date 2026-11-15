@@ -346,6 +346,46 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     for entry in ENTRIES:
       self.assertIn(entry, output)
 
+  def test_ccp_gemini_interactive_defaults_to_ultracode_with_opt_outs(self):
+    flag = ["--settings", '{"ultracode": true}']
+
+    def has_ultracode(argv):
+      return flag in [argv[i:i + 2] for i in range(len(argv) - 1)]
+
+    # Interactive PTY enables ultracode on ccp-gemini only.
+    for entry, expected in (("ccp-gemini", True), ("ccp-gemini-pro", False), ("ccp-gemini-flash", False), ("ccp-gemini-argon", False)):
+      with self.subTest(entry=entry):
+        self.records.unlink(missing_ok=True)
+        status, output, _ = self.launch(entry)
+        self.assertEqual(status, 0, output)
+        argv = self.read_records()[0]["argv"]
+        self.assertEqual(has_ultracode(argv), expected, entry)
+
+    # Non-TTY, -p/--print, subcommands, --no-ultracode (with -fast in either order), and CCP_GEMINI_ULTRACODE=0 all omit ultracode.
+    cases = (
+      ("non_tty", [], False, {}),
+      ("print_short", ["-p", "--no-ultracode"], True, {}),
+      ("print_long", ["--print", "hello"], True, {}),
+      ("subcommand_mcp", ["mcp", "list"], True, {}),
+      ("flag_opt_out_before_fast", ["--no-ultracode", "-fast", "--resume", "s1"], True, {}),
+      ("flag_opt_out_after_fast", ["-fast", "--no-ultracode", "--resume", "s1"], True, {}),
+      ("env_opt_out", ["--resume", "s1"], True, {"CCP_GEMINI_ULTRACODE": "0"}),
+    )
+    for name, args, term, extra_env in cases:
+      with self.subTest(case=name):
+        self.records.unlink(missing_ok=True)
+        status, output, errors = self.launch("ccp-gemini", args, terminal=term, env=self.env | extra_env)
+        self.assertEqual(status, 0, output + errors)
+        rec = self.read_records()[0]
+        self.assertFalse(has_ultracode(rec["argv"]), name)
+        if name == "print_short":
+          self.assertEqual(rec["argv"][-2:], ["-p", "--no-ultracode"])
+        else:
+          self.assertNotIn("--no-ultracode", rec["argv"])
+        if "fast" in name:
+          self.assertTrue(rec["fast"])
+          self.assertEqual(rec["argv"][-2:], ["--resume", "s1"])
+
 
 if __name__ == "__main__":
   unittest.main()
