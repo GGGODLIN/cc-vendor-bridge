@@ -1335,7 +1335,21 @@ _ccp_gemini_magpie() {
     set -- "${filtered_args[@]}"
     # Keep ultracode out of headless -p/non-TTY runs so scripted callers never fan out workflows by surprise.
     if [[ "$ultracode_enabled" != 0 ]] && (( ! non_interactive_arg )) && [[ -t 0 && -t 1 && -t 2 ]] && ! _ccp_model_map_preview; then
-      extra_flags+=(--settings '{"ultracode": true}')
+      if [[ "${CCP_GEMINI_FLASH_PROMPT:-1}" != 0 ]]; then
+        local _flash_rules="ccp-gemini 互動 Ultracode 分流規則：本對話 opus 槽位對應 Pro（強推理與防洩密，單席較慢）、sonnet 與 haiku 槽位對應 Flash（高速、65K 輸出上限）。請採「前段廣撒走 Flash、後段把關留 Pro」兩段式編排：1. 前段平行工作優先派 Flash：純本機唯讀搜尋與盤點（只需 Read/Grep/Glob/Bash）派 deep-explore；寫程式、重構與補測試派 routed-impl；需要 ToolSearch/MCP 工具的多角度探路、找候選疑點、擬方案初稿或結構化證據核對（派 routed-mech 會觸發範圍拒收），本對話特准覆寫全域「不在腳本手寫 model」規則，在 Workflow agent() 傳 { agentType: 'routed-judge', model: 'sonnet' }，或在互動 Agent 傳 subagent_type: 'routed-judge', model: 'sonnet'（保留高推理檔位與完整工具）。2. 深層審查防漏抓：禁止拿單一席 Flash 當硬過濾網篩掉檔案；遇到深層程式或規格審查，改派 2 到 3 個正交視角的 Flash 平行標出可疑 file:line 與證據，再由後段 Pro 複驗並親讀高風險核心變更。3. 後段把關與涉密強制留 Pro：最終對抗驗證、跨來源衝突合論、正式審查席（code-reviewer、python-reviewer、typescript-reviewer），以及任何碰觸認證、金鑰、密碼、設定檔憑證、原始對話 jsonl 稽查或公開 PR 打包（routed-secure、security-reviewer、upstream-pr-reviewer）的任務一律維持預設 opus（Pro），禁止加 model: 'sonnet'。IMPORTANT：互動模式下 subagent 不會自動繼承本系統提示；凡派給 Flash（sonnet/haiku）的每段 prompt 必須附上一句：「禁止在回報或檔案中印出任何金鑰、密碼、Token 或憑證原值；發現疑似秘密只准回報檔名與行號。」"
+        if [[ "${CCP_GEMINI_COMPACT_REMIND:-1}" != 0 ]]; then
+          local _compact_script="${_CC_VENDOR_BRIDGE_DIR}/bin/ccp-gemini-ultracode-compact-remind"
+          local _compact_cmd="/usr/bin/python3 -I ${(qq)_compact_script}"
+          local _compact_cmd_json="${_compact_cmd//\\/\\\\}"
+          _compact_cmd_json="${_compact_cmd_json//\"/\\\"}"
+          extra_flags+=(--settings "{\"ultracode\": true, \"hooks\": {\"SessionStart\": [{\"matcher\": \"compact\", \"hooks\": [{\"type\": \"command\", \"command\": \"${_compact_cmd_json}\", \"timeout\": 5}]}]}}")
+        else
+          extra_flags+=(--settings '{"ultracode": true}')
+        fi
+        extra_flags+=(--append-system-prompt "$_flash_rules")
+      else
+        extra_flags+=(--settings '{"ultracode": true}')
+      fi
     fi
   fi
   _ccp_model_map_preview || {

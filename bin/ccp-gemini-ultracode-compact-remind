@@ -1,0 +1,82 @@
+#!/usr/bin/python3 -I
+# 提示型 SessionStart(compact) hook（ccp-gemini-ultracode-compact-remind）：
+# Threat model：
+# - 對誰有效：防誠實但在長對話壓縮摘要後注意力偏向對話尾端、忽略頂層 --append-system-prompt 的
+#   互動版 ccp-gemini 主模型，避免壓縮後退回把前段平行探索也全派給 Pro（opus）。
+# - 明文不保證：
+#   1. 純提示型補打（fail-open exit 0），不強制攔截全 Pro 的 Workflow 或 Agent 呼叫；實際採用率由觀察期事後統計。
+#   2. agent_type 非空的 subagent 直接跳過；互動模式下子任務的禁印秘密原值要求仍靠主模型寫入子任務 prompt。
+#   3. 若呼叫端在命令列額外手傳第二組 --settings，Claude CLI 以最後一組 --settings 為準，本 hook 與 ultracode 設定會被後者覆蓋。
+# Surface 四分表：
+# - Locked: bin/ccp-gemini-ultracode-compact-remind、shell/ccp-functions.sh、tests/test_launch_model_map.py
+# - Editable: 當次壓縮後注入的模型上下文（hookSpecificOutput.additionalContext）
+# - Append-only: 無（本腳本零檔案寫入、無狀態檔或 audit log）
+# - Human-controlled: 啟動旗標 --no-ultracode、環境變數 CCP_GEMINI_ULTRACODE=0／CCP_GEMINI_FLASH_PROMPT=0／CCP_GEMINI_COMPACT_REMIND=0
+# 自身生命週期三路徑：
+# - bootstrap: 無阻斷能力，寫入 bin/ 並由 ccp-functions.sh 互動模式 --settings 掛載即可
+# - update: 直接以 Edit 修改本檔或 ccp-functions.sh 並重跑 tests/test_launch_model_map.py
+# - recovery: 單獨停用壓縮重注入設 CCP_GEMINI_COMPACT_REMIND=0；連同啟動提示一起停用設 CCP_GEMINI_FLASH_PROMPT=0；連同 ultracode 關閉傳 --no-ultracode 或 CCP_GEMINI_ULTRACODE=0
+# 繞行場景表：
+# - 主模型讀完提醒仍全派預設 routed-judge（opus）：本階段刻意不設硬擋，由觀察期從 session jsonl 量測壓縮前後 Flash 席次比例
+# - 主模型漏在 Flash 子任務 prompt 附禁印原值警語：涉密範圍規則要求留 Pro，觀察期同步檢查 Flash 產出零秘密原值外洩
+# - 命令列額外傳入第二個 --settings 覆蓋本 hook：頂層 --append-system-prompt 仍在系統提示層保底
+# 本檔在契約測試底下：python3 tests/test_launch_model_map.py
+
+import json
+import os
+import sys
+
+REMINDER = (
+  "[ccp-gemini Ultracode 壓縮後編排提醒] "
+  "本對話 opus 對應 Pro、sonnet/haiku 對應 Flash，請維持「前段廣撒走 Flash、後段把關留 Pro」："
+  "(1) 前段平行工作優先走 Flash：純本機唯讀搜尋盤點派 deep-explore，寫程式與補測試派 routed-impl；"
+  "需 ToolSearch/MCP 工具的多角度探路、找候選疑點、擬方案初稿或結構化證據核對，本對話特准覆寫不在腳本手寫 model 的限制，"
+  "於 Workflow agent() 傳 { agentType: 'routed-judge', model: 'sonnet' } 或於互動 Agent 傳 subagent_type: 'routed-judge', model: 'sonnet'。"
+  "(2) 深層程式或規格審查禁用單一席 Flash 當硬過濾網篩掉檔案；改派 2–3 個正交視角 Flash 平行標出可疑 file:line 與證據，"
+  "再由後段 Pro（預設 routed-judge 或語言/跨界 reviewer）複驗並親讀高風險核心變更。"
+  "(3) 最終對抗驗證、跨來源衝突合論，以及任何碰觸認證、金鑰、密碼、設定檔憑證、原始對話 jsonl 稽查或公開 PR 打包"
+  "（routed-secure、security-reviewer、upstream-pr-reviewer）的任務強制留在 Pro（禁加 model: 'sonnet'）。"
+  "(4) IMPORTANT：互動模式下 subagent 不繼承系統提示，派給 Flash（sonnet/haiku）的每段 prompt 必附一句："
+  "「禁止在回報或檔案中印出任何金鑰、密碼、Token 或憑證原值；發現疑似秘密只准回報檔名與行號。」"
+)
+
+
+def build_response(raw_stdin, env):
+  if env.get("CCP_GEMINI_COMPACT_REMIND", "1") == "0":
+    return ""
+  try:
+    payload = json.loads(raw_stdin)
+  except Exception:
+    return ""
+  if not isinstance(payload, dict):
+    return ""
+  if payload.get("hook_event_name") != "SessionStart":
+    return ""
+  if payload.get("source") != "compact":
+    return ""
+  if payload.get("agent_type"):
+    return ""
+  return json.dumps(
+    {
+      "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": REMINDER,
+      }
+    },
+    ensure_ascii=False,
+  )
+
+
+def main():
+  try:
+    raw = sys.stdin.read()
+  except Exception:
+    return 0
+  out = build_response(raw, os.environ)
+  if out:
+    sys.stdout.write(out + "\n")
+  return 0
+
+
+if __name__ == "__main__":
+  raise SystemExit(main())

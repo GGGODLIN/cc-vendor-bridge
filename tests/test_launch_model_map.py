@@ -347,21 +347,58 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
       self.assertIn(entry, output)
 
   def test_ccp_gemini_interactive_defaults_to_ultracode_with_opt_outs(self):
-    flag = ["--settings", '{"ultracode": true}']
+    def settings_arg(argv):
+      for i in range(len(argv) - 1):
+        if argv[i] == "--settings":
+          return json.loads(argv[i + 1])
+      return None
 
-    def has_ultracode(argv):
-      return flag in [argv[i:i + 2] for i in range(len(argv) - 1)]
+    def system_prompt_arg(argv):
+      for i in range(len(argv) - 1):
+        if argv[i] == "--append-system-prompt":
+          return argv[i + 1]
+      return None
 
-    # Interactive PTY enables ultracode on ccp-gemini only.
+    # Interactive PTY enables ultracode + Flash orchestration prompt + compact reminder hook on ccp-gemini only.
     for entry, expected in (("ccp-gemini", True), ("ccp-gemini-pro", False), ("ccp-gemini-flash", False), ("ccp-gemini-argon", False)):
       with self.subTest(entry=entry):
         self.records.unlink(missing_ok=True)
         status, output, _ = self.launch(entry)
         self.assertEqual(status, 0, output)
         argv = self.read_records()[0]["argv"]
-        self.assertEqual(has_ultracode(argv), expected, entry)
+        cfg = settings_arg(argv)
+        prompt = system_prompt_arg(argv)
+        if expected:
+          self.assertIsNotNone(cfg, entry)
+          self.assertIs(cfg.get("ultracode"), True)
+          hooks = cfg.get("hooks", {}).get("SessionStart", [])
+          self.assertEqual(len(hooks), 1)
+          self.assertEqual(hooks[0].get("matcher"), "compact")
+          self.assertIn("ccp-gemini-ultracode-compact-remind", hooks[0]["hooks"][0]["command"])
+          self.assertIsNotNone(prompt, entry)
+          self.assertIn("model: 'sonnet'", prompt)
+          self.assertIn("routed-judge", prompt)
+          self.assertIn("禁止在回報或檔案中印出任何金鑰", prompt)
+        else:
+          self.assertIsNone(cfg, entry)
+          self.assertIsNone(prompt, entry)
 
-    # Non-TTY, -p/--print, subcommands, --no-ultracode (with -fast in either order), and CCP_GEMINI_ULTRACODE=0 all omit ultracode.
+    # Recovery granular opt-outs keep ultracode while stripping compact hook or Flash prompt.
+    self.records.unlink(missing_ok=True)
+    status, output, _ = self.launch("ccp-gemini", env=self.env | {"CCP_GEMINI_COMPACT_REMIND": "0"})
+    self.assertEqual(status, 0, output)
+    argv = self.read_records()[0]["argv"]
+    self.assertEqual(settings_arg(argv), {"ultracode": True})
+    self.assertIsNotNone(system_prompt_arg(argv))
+
+    self.records.unlink(missing_ok=True)
+    status, output, _ = self.launch("ccp-gemini", env=self.env | {"CCP_GEMINI_FLASH_PROMPT": "0"})
+    self.assertEqual(status, 0, output)
+    argv = self.read_records()[0]["argv"]
+    self.assertEqual(settings_arg(argv), {"ultracode": True})
+    self.assertIsNone(system_prompt_arg(argv))
+
+    # Non-TTY, -p/--print, subcommands, --no-ultracode (with -fast in either order), and CCP_GEMINI_ULTRACODE=0 all omit ultracode and prompt.
     cases = (
       ("non_tty", [], False, {}),
       ("print_short", ["-p", "--no-ultracode"], True, {}),
@@ -377,7 +414,8 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
         status, output, errors = self.launch("ccp-gemini", args, terminal=term, env=self.env | extra_env)
         self.assertEqual(status, 0, output + errors)
         rec = self.read_records()[0]
-        self.assertFalse(has_ultracode(rec["argv"]), name)
+        self.assertIsNone(settings_arg(rec["argv"]), name)
+        self.assertIsNone(system_prompt_arg(rec["argv"]), name)
         if name == "print_short":
           self.assertEqual(rec["argv"][-2:], ["-p", "--no-ultracode"])
         else:
@@ -385,6 +423,70 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
         if "fast" in name:
           self.assertTrue(rec["fast"])
           self.assertEqual(rec["argv"][-2:], ["--resume", "s1"])
+
+  def test_ccp_gemini_compact_remind_hook_contract(self):
+    self.records.unlink(missing_ok=True)
+    status, output, _ = self.launch("ccp-gemini")
+    self.assertEqual(status, 0, output)
+    argv = self.read_records()[0]["argv"]
+    cfg = json.loads(argv[argv.index("--settings") + 1])
+    hook_cmd = cfg["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    hook_script = ROOT / "bin" / "ccp-gemini-ultracode-compact-remind"
+
+    def run_hook(stdin_text, extra_env=None):
+      before = sorted(p.relative_to(self.fixture) for p in self.fixture.rglob("*"))
+      res = subprocess.run(
+        ["/bin/sh", "-c", hook_cmd],
+        input=stdin_text,
+        text=True,
+        capture_output=True,
+        env=self.env | (extra_env or {}),
+        cwd=str(self.fixture),
+        timeout=10,
+      )
+      after = sorted(p.relative_to(self.fixture) for p in self.fixture.rglob("*"))
+      self.assertEqual(before, after, "提示型 hook 不得寫入任何檔案")
+      return res
+
+    # 1. known-good: SessionStart + source=compact on main session emits additionalContext.
+    good = run_hook(json.dumps({"hook_event_name": "SessionStart", "source": "compact", "session_id": "s-compact"}))
+    self.assertEqual(good.returncode, 0, good.stderr)
+    parsed = json.loads(good.stdout)
+    self.assertEqual(parsed["hookSpecificOutput"]["hookEventName"], "SessionStart")
+    ctx = parsed["hookSpecificOutput"]["additionalContext"]
+    self.assertIn("model: 'sonnet'", ctx)
+    self.assertIn("routed-judge", ctx)
+    self.assertIn("禁止在回報或檔案中印出任何金鑰", ctx)
+
+    # 2. known-bad: startup/resume/clear, wrong event, or subagent agent_type all stay silent.
+    for label, payload in (
+      ("startup", {"hook_event_name": "SessionStart", "source": "startup"}),
+      ("resume", {"hook_event_name": "SessionStart", "source": "resume"}),
+      ("clear", {"hook_event_name": "SessionStart", "source": "clear"}),
+      ("wrong_event", {"hook_event_name": "PreToolUse", "source": "compact"}),
+      ("subagent", {"hook_event_name": "SessionStart", "source": "compact", "agent_type": "routed-judge"}),
+    ):
+      with self.subTest(silent=label):
+        res = run_hook(json.dumps(payload))
+        self.assertEqual(res.returncode, 0)
+        self.assertEqual(res.stdout, "")
+
+    # 3. boundary / fail-open: malformed JSON, non-dict JSON, empty stdin all exit 0 silently.
+    for raw in ("", "{malformed", "[]", "null"):
+      res = run_hook(raw)
+      self.assertEqual(res.returncode, 0)
+      self.assertEqual(res.stdout, "")
+
+    # 4. lifecycle (self-content + recovery env switch): feeding own source text does not break, and CCP_GEMINI_COMPACT_REMIND=0 disables output.
+    self_payload = json.dumps({
+      "hook_event_name": "SessionStart",
+      "source": "compact",
+      "transcript_excerpt": hook_script.read_text(),
+    })
+    self.assertEqual(json.loads(run_hook(self_payload).stdout)["hookSpecificOutput"]["hookEventName"], "SessionStart")
+    disabled = run_hook(self_payload, {"CCP_GEMINI_COMPACT_REMIND": "0"})
+    self.assertEqual(disabled.returncode, 0)
+    self.assertEqual(disabled.stdout, "")
 
 
 if __name__ == "__main__":
