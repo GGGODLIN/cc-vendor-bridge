@@ -317,7 +317,7 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
         self.assertNotIn(flag, record["argv"])
 
   def test_gpt_main_entries_turn_idle_compaction_off_and_others_leave_it(self):
-    flag = ["--settings", '{"idleCompaction":false}']
+    flag = "idleCompaction"
     for entry, expected in (("ccp-gpt", True), ("ccp-sol", True), ("ccp-gpt-smart", True), ("ccp-bruce", True),
                             ("ccp-grok", False), ("ccp-glm", False)):
       with self.subTest(entry=entry):
@@ -325,8 +325,31 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
         status, output, _ = self.launch(entry, terminal=False)
         self.assertEqual(status, 0, output)
         argv = self.read_records()[0]["argv"]
-        pairs = [argv[i:i + 2] for i in range(len(argv) - 1)]
-        self.assertEqual(flag in pairs, expected, argv)
+        settings = [json.loads(argv[i + 1]) for i, arg in enumerate(argv[:-1]) if arg == "--settings"]
+        self.assertEqual(any(item.get(flag) is False for item in settings), expected, argv)
+
+  def test_smart_defaults_to_xhigh_ultracode_without_leaking_to_plain_gpt(self):
+    for terminal, args in ((False, []), (True, []), (False, ["--fast", "--resume", "fixture-session"])):
+      with self.subTest(terminal=terminal, args=args):
+        self.records.unlink(missing_ok=True)
+        script = "ccp-gpt-smart " + " ".join(shlex.quote(arg) for arg in args) + "; ccp-gpt"
+        status, output, _ = self.launch("ccp-gpt-smart", terminal=terminal, script=script)
+        self.assertEqual(status, 0, output)
+        smart, plain = self.read_records()
+        for record, effort, expected_settings in (
+          (smart, "xhigh", {"idleCompaction": False, "ultracode": True}),
+          (plain, "medium", {"idleCompaction": False}),
+        ):
+          argv = record["argv"]
+          self.assertEqual(argv.count("--effort"), 1)
+          self.assertEqual(argv[argv.index("--effort") + 1], effort)
+          self.assertEqual(argv.count("--settings"), 1)
+          self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), expected_settings)
+        self.assertEqual(smart["fast"], "--fast" in args)
+        self.assertFalse(plain["fast"])
+        if args:
+          self.assertEqual(smart["argv"][-2:], ["--resume", "fixture-session"])
+          self.assertNotIn("--fast", smart["argv"])
 
   def test_opus_maps_to_sol_without_fast_by_default(self):
     for entry, fleet in (("ccp-gpt", "gpt-test-luna(max)"), ("ccp-sol", "gpt-test-terra(max)")):

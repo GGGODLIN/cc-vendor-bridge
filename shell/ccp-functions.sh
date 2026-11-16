@@ -1224,11 +1224,13 @@ ccp-gpt() {
     local main_effort
     main_effort=$(_ccp_effort_for_model "$ANTHROPIC_MODEL")
     [[ -z "$main_effort" ]] && main_effort=medium
+    main_effort=${_CCP_GPT_MAIN_EFFORT:-$main_effort}
+    local gpt_settings=${_CCP_GPT_SETTINGS:-'{"idleCompaction":false}'}
     # CC's idle compaction fires at 90% of a 1h cache TTL it assumes for every model;
     # GPT keeps its cache only ~30 min, so on GPT sessions it fired at 56–62 min idle
     # (21 notices, 2026-10-08..11), after the cache it is meant to reuse had likely gone.
     _cc_vendor_claude --effort "$main_effort" --model "$ANTHROPIC_MODEL" \
-      --settings '{"idleCompaction":false}' \
+      --settings "$gpt_settings" \
       --disallowed-tools 'WebSearch' \
       --append-system-prompt "${_rules}IMPORTANT: 派 Task subagent 或 workflow agent 時，把上面三條逐字放進它們的 prompt。互動模式下 subagent 不會繼承本注入，只有 --print 模式才會。" \
       --append-subagent-system-prompt "$_rules" \
@@ -1245,6 +1247,8 @@ ccp-gpt-smart() {
     return 1
   fi
   local _CCP_GPT_REFRESHED=1
+  local _CCP_GPT_MAIN_EFFORT=xhigh
+  local _CCP_GPT_SETTINGS='{"idleCompaction":false,"ultracode":true}'
   (
     local custom_headers
     custom_headers="$(print -r -- "${ANTHROPIC_CUSTOM_HEADERS:-}" | /usr/bin/grep -vFx -- 'X-CCP-Fast: 1')"
