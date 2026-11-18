@@ -957,7 +957,9 @@ assert_file_line 'mix-sol keeps model flag after effort' "$FIXTURE/capture.log" 
 assert_file_line 'mix-sol passes Sol after model flag' "$FIXTURE/capture.log" "arg4=$SOL_1M"
 assert_file_line 'mix-sol pins FABLE to sol' "$FIXTURE/capture.log" "fable_model=$SOL_1M"
 assert_file_line 'mix-sol keeps the free fleet at 480K' "$FIXTURE/capture.log" 'max_context_tokens=480000'
-assert_file_line 'mix-sol compacts Sol under the backend ceiling' "$FIXTURE/capture.log" 'auto_compact_window=900000'
+SOL_COMPACT_WINDOW=900000
+[[ "$GPT_SOL" == gpt-6.2-sol ]] && SOL_COMPACT_WINDOW=784800
+assert_file_line 'mix-sol compacts Sol under the backend ceiling' "$FIXTURE/capture.log" "auto_compact_window=$SOL_COMPACT_WINDOW"
 assert_file_line 'mix-sol keeps GPT vendor marker' "$FIXTURE/capture.log" 'cc_vendor=mix-gpt'
 assert_file_line 'mix-sol keeps free Opus slot' "$FIXTURE/capture.log" 'opus_model=free(max)'
 assert_file_line 'mix-sol keeps free subagent slot' "$FIXTURE/capture.log" 'subagent_model=free(max)'
