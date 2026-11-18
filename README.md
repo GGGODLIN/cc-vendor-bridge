@@ -2,7 +2,7 @@
 
 Personal toolkit for plugging non-Anthropic LLM vendors into Claude Code CLI without giving up the CC ecosystem (skills, MCP, hooks, CLAUDE.md, subagents).
 
-**Status:** Stage 2 — DeepSeek verified production-ready (2026-05-03). Kimi / GLM / Qwen pending vendor sign-up. Path 1 sidecar plugin not yet built.
+**Status:** Stage 2 — Shell launchers support direct DeepSeek, GLM, and MiMo endpoints, a local gateway, Bruce, and Magpie routes for GPT, Gemini, Grok, and pooled models. `ccp-list` shows the current non-direct model mappings, including the companion split-proxy launchers. Path 1 sidecar plugin is still planned.
 
 See [`docs/stage-2-playbook.md`](docs/stage-2-playbook.md) for the per-vendor onboarding protocol.
 
@@ -32,7 +32,7 @@ docs/                              # research + design notes + Stage 2 protocol
 └── pricing-snapshot.md            # vendor pricing (per-vendor LAST_VERIFIED inside)
 
 shell/
-├── ccp-functions.sh               # 7 zsh functions (ccp-deepseek / kimi / glm / qwen variants)
+├── ccp-functions.sh               # zsh launchers, relay helpers, and ccp-list
 └── secrets.example                # API key template (DO NOT commit real keys)
 
 proxy/                             # caveat 9 fix — DeepSeek tool_choice rewriter

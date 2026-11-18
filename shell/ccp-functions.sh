@@ -1149,7 +1149,9 @@ ccp-gpt() {
     # ~921,998 rejected, so the backend ceiling is 922,000 = the documented 1,050,000
     # window minus the fixed 128k output reserve (max_tokens=64 on the probe did not
     # move it). terra and luna both cleared 492,719; their own ceilings are unprobed.
-    # Codex metadata still reports 272000 and stays untrustworthy.
+    # The live Magpie /v1/models lists context_window=872000 for both
+    # codex/gpt-6.2-astra and codex/gpt-6.2-sol. Real Codex sessions use 828400
+    # as the effective window.
     # Value below matches Tibo's recommended Codex config rather than the 922,000
     # ceiling: usable space is identical either way (compaction governs at 867,000),
     # the difference is only where CC's local wall lands — 977,000 here, i.e. above the
@@ -1291,10 +1293,9 @@ ccp-sol() {
   )
 }
 
-# ===== Magpie relay, Gemini on a friend's paid Google key (2026-10-16; roles 2026-11-11) =====
-# The key sits in Magpie's `google` provider and is billed per token to its owner
-# ($2 in / $10 out per 1M, promo price), so every slot — Haiku included, by the
-# user's choice — spends that key.
+# ===== Magpie relay, Gemini role groups =====
+# `gemini-pro` uses a friend's paid Google key. `gemini-flash` tries Antigravity
+# first and falls back to that Google key.
 # ccp-gemini-pro / ccp-gemini-flash pick Magpie's role groups `gemini-pro` and
 # `gemini-flash`, so a new Gemini generation is swapped in Magpie
 # (`magpie group set gemini-pro models=…`) without touching any caller;
@@ -1397,13 +1398,14 @@ _ccp_gemini_magpie() {
 ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro:high' 'group/gemini-pro:medium' 32768 "$@"; }
 ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash:high' 'group/gemini-flash:high' 65536 "$@"; }
 ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon:high' 'google/gemini-4-argon:high' 32768 "$@"; }
-# Pro plans, Flash executes (the user's mixed launcher, 2026-11-13): subagents get Flash's
-# 65536 cap and speed. Carbon accepts the larger max_tokens (200 on 2026-11-13) and still
-# stops each reply at its own 32768.
+# Pro plans, Flash executes: subagents get Flash's 65536 cap and speed. With
+# max_tokens=65536, Carbon's visible text stops at roughly 32K–34.8K tokens,
+# but thinking plus text can fill the full 65536-token output budget.
 ccp-gemini() { _ccp_gemini_magpie ccp-gemini gemini 'group/gemini-pro:high' 'group/gemini-flash:high' 65536 "$@"; }
 
-# Zen caps output at 32000 while WorkBuddy allows 128000; use the shared ceiling
-# so a relay fallback does not inherit an unsupported output budget.
+# Zen and WorkBuddy free DeepSeek are retired. Magpie's ds-free group lists
+# Vultr (currently disabled), AMD Token Lab and Qoder. The launcher keeps
+# a 32000-token cap for fallback compatibility across providers.
 ccp-ds-free() {
   if ! _ccp_model_map_preview && ! /usr/bin/nc -z 127.0.0.1 8317 2>/dev/null; then
     print -P "%F{red}[ccp-ds-free] relay :8317 not listening — check ~/.magpie-machine/switch-mode%f" >&2
