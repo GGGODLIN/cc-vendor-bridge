@@ -1394,8 +1394,11 @@ _ccp_gemini_magpie() {
 }
 
 # Carbon at :high can exhaust the 32768 output ceiling in thinking on batch subagents,
-# so Sonnet/Haiku/subagent slots step down to :medium while main/Fable/Opus keep :high.
-ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro:high' 'group/gemini-pro:medium' 32768 "$@"; }
+# so Sonnet/Haiku/subagent slots step down to :medium.
+# Main/Fable/Opus carry no suffix so CC's /effort decides (2026-11-19, Neon behind the group):
+# a suffix outranks CC's effort, and with none the global effortLevel (xhigh) reaches Magpie,
+# which sends max as xhigh. Headless -p callers therefore run at the global effortLevel too.
+ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro' 'group/gemini-pro:medium' 32768 "$@"; }
 ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash:high' 'group/gemini-flash:high' 65536 "$@"; }
 ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon:high' 'google/gemini-4-argon:high' 32768 "$@"; }
 # Pro plans, Flash executes: subagents get Flash's 65536 cap and speed. With

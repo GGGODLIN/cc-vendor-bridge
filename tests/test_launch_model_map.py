@@ -169,7 +169,7 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     expected = {
       "ccp-gemini": (["group/gemini-pro:high"] * 3 + ["group/gemini-flash:high"] * 3, "65536"),
       "ccp-gemini-flash": (["group/gemini-flash:high"] * 6, "65536"),
-      "ccp-gemini-pro": (["group/gemini-pro:high"] * 3 + ["group/gemini-pro:medium"] * 3, "32768"),
+      "ccp-gemini-pro": (["group/gemini-pro"] * 3 + ["group/gemini-pro:medium"] * 3, "32768"),
       "ccp-gemini-argon": (["google/gemini-4-argon:high"] * 6, "32768"),
     }
     for entry, (slots, cap) in expected.items():
