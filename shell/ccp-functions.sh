@@ -1380,8 +1380,8 @@ _ccp_gemini_magpie() {
     export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-$sub_model}"
     export CLAUDE_CODE_MAX_OUTPUT_TOKENS=${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-$cap}
     export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-1048576}
-    # Same ~22k compact gap as the other Gemini launchers; no Argon overshoot sample yet.
-    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-1026000}
+    # Compact before Gemini 4's ~710K–800K MALFORMED_RESPONSE stall zone (~717K trigger with CC's 33K offset).
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-750000}
     export API_TIMEOUT_MS=${API_TIMEOUT_MS:-3000000}
     # Magpie's 1m quota-rest sends Retry-After: 60, which CC gives up on after one
     # try unless the retry watchdog is on.

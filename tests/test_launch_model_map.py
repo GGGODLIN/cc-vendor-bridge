@@ -33,6 +33,7 @@ import json,os,sys
 keys=['ANTHROPIC_MODEL','ANTHROPIC_DEFAULT_FABLE_MODEL','ANTHROPIC_DEFAULT_OPUS_MODEL','ANTHROPIC_DEFAULT_SONNET_MODEL','ANTHROPIC_DEFAULT_HAIKU_MODEL','CLAUDE_CODE_SUBAGENT_MODEL']
 record={'slots':[os.environ.get(k,'') for k in keys],'argv':sys.argv[1:],'fast':'X-CCP-Fast: 1' in os.environ.get('ANTHROPIC_CUSTOM_HEADERS',''),'headers':os.environ.get('ANTHROPIC_CUSTOM_HEADERS','')}
 record['limits']=[os.environ.get(k,'') for k in ('CLAUDE_CODE_MAX_OUTPUT_TOKENS','CLAUDE_CODE_MAX_CONTEXT_TOKENS')]
+record['auto_compact_window']=os.environ.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW','')
 record['base_url']=os.environ.get('ANTHROPIC_BASE_URL','')
 record['split_auth']='ANTHROPIC_AUTH_TOKEN' not in os.environ and 'ANTHROPIC_API_KEY' not in os.environ
 record['relay_auth']=os.environ.get('ANTHROPIC_AUTH_TOKEN')=='AUTH-CREDENTIAL-CANARY' and 'ANTHROPIC_API_KEY' not in os.environ
@@ -180,6 +181,7 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
         record, = self.read_records()
         self.assertEqual(record["slots"], slots)
         self.assertEqual(record["limits"], [cap, "1048576"])
+        self.assertEqual(record["auto_compact_window"], "750000")
 
   def test_un_launch_pins_models_limits_auth_and_preserves_arguments(self):
     slots = ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
