@@ -1393,19 +1393,18 @@ _ccp_gemini_magpie() {
   )
 }
 
-# Carbon at :high can exhaust the 32768 output ceiling in thinking on batch subagents,
-# so Sonnet/Haiku/subagent slots step down to :medium.
-# Main/Fable/Opus carry no suffix so CC's /effort decides (2026-11-19, Neon behind the group):
-# a suffix outranks CC's effort, and with none the global effortLevel (xhigh) reaches Magpie,
-# which sends max as xhigh. Headless -p callers therefore run at the global effortLevel too.
-ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro' 'group/gemini-pro:medium' 32768 "$@"; }
-ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash:high' 'group/gemini-flash:high' 65536 "$@"; }
-ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon:high' 'google/gemini-4-argon:high' 32768 "$@"; }
+# No Gemini launcher pins an effort suffix (2026-11-19): a suffix outranks CC's effort, so
+# /effort and each agent's own effort only reach Magpie without one. Magpie fits the level
+# to the model's (max goes as xhigh to Neon/Hydrogen, anything above high as high to Argon).
+# Headless -p callers therefore run at the global effortLevel. Subagents that name no effort
+# inherit it too: if batch subagents start exhausting the output cap in thinking (Carbon did
+# at :high on 32768), give the Sonnet/Haiku/subagent slots a suffix back.
+ccp-gemini-pro() { _ccp_gemini_magpie ccp-gemini-pro gemini-pro 'group/gemini-pro' 'group/gemini-pro' 32768 "$@"; }
+ccp-gemini-flash() { _ccp_gemini_magpie ccp-gemini-flash gemini-flash 'group/gemini-flash' 'group/gemini-flash' 65536 "$@"; }
+ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/gemini-4-argon' 'google/gemini-4-argon' 32768 "$@"; }
 # Pro plans, Flash executes: subagents get Flash's 65536 cap and speed. With
 # max_tokens=65536, Carbon's visible text stops at roughly 32K–34.8K tokens,
 # but thinking plus text can fill the full 65536-token output budget.
-# No suffix on any slot (2026-11-19): Neon and Hydrogen both take xhigh, so CC's /effort and
-# each agent's own effort reach Magpie instead of a pinned :high.
 ccp-gemini() { _ccp_gemini_magpie ccp-gemini gemini 'group/gemini-pro' 'group/gemini-flash' 65536 "$@"; }
 
 # Zen and WorkBuddy free DeepSeek are retired. Magpie's ds-free group lists

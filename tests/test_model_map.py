@@ -113,16 +113,13 @@ class ModelMapTest(unittest.TestCase):
     cells = dict(rows)["ccp-sol"]
     self.assertEqual(cells[1:6], ["gpt-test-sol", "gpt-test-sol", "gpt-test-sol", "gpt-test-terra(max)", "gpt-test-terra(max)"])
     # The user chose an all-Argon launcher, Haiku slot included (2026-10-16).
-    self.assertEqual(set(dict(rows)["ccp-gemini-argon"][1:6]), {"google/gemini-4-argon:high"})
-    # Pro and Flash name Magpie role groups, so a Gemini generation swap never edits launchers;
-    # Pro steps Sonnet/Haiku/subagent down to :medium so batch subagents do not exhaust 32768 in thinking;
-    # its main slots carry no suffix so CC's /effort reaches Magpie (2026-11-19).
-    self.assertEqual(
-      dict(rows)["ccp-gemini-pro"][1:6],
-      ["group/gemini-pro", "group/gemini-pro", "group/gemini-pro", "group/gemini-pro:medium", "group/gemini-pro:medium"],
-    )
-    self.assertIn("ccp-gemini-pro=group/gemini-pro:medium", result.stdout)
-    self.assertEqual(set(dict(rows)["ccp-gemini-flash"][1:6]), {"group/gemini-flash:high"})
+    # No Gemini launcher pins an effort suffix: CC's /effort and each agent's own effort reach
+    # Magpie, which fits them to the model's levels (2026-11-19).
+    self.assertEqual(set(dict(rows)["ccp-gemini-argon"][1:6]), {"google/gemini-4-argon"})
+    # Pro and Flash name Magpie role groups, so a Gemini generation swap never edits launchers.
+    self.assertEqual(set(dict(rows)["ccp-gemini-pro"][1:6]), {"group/gemini-pro"})
+    self.assertRegex(result.stdout, r"ccp-gemini-pro=group/gemini-pro(?![\w:(-])")
+    self.assertEqual(set(dict(rows)["ccp-gemini-flash"][1:6]), {"group/gemini-flash"})
     # The mixed launcher plans on Pro and hands Sonnet/Haiku/subagent work to Flash (2026-11-13),
     # with no effort suffix so CC's effort decides (2026-11-19).
     self.assertEqual(

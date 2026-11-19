@@ -168,9 +168,9 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     # launcher takes Flash's cap so its subagents are not cut at 32768.
     expected = {
       "ccp-gemini": (["group/gemini-pro"] * 3 + ["group/gemini-flash"] * 3, "65536"),
-      "ccp-gemini-flash": (["group/gemini-flash:high"] * 6, "65536"),
-      "ccp-gemini-pro": (["group/gemini-pro"] * 3 + ["group/gemini-pro:medium"] * 3, "32768"),
-      "ccp-gemini-argon": (["google/gemini-4-argon:high"] * 6, "32768"),
+      "ccp-gemini-flash": (["group/gemini-flash"] * 6, "65536"),
+      "ccp-gemini-pro": (["group/gemini-pro"] * 6, "32768"),
+      "ccp-gemini-argon": (["google/gemini-4-argon"] * 6, "32768"),
     }
     for entry, (slots, cap) in expected.items():
       with self.subTest(entry=entry):
