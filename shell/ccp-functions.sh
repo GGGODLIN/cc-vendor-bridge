@@ -1404,7 +1404,9 @@ ccp-gemini-argon() { _ccp_gemini_magpie ccp-gemini-argon gemini-argon 'google/ge
 # Pro plans, Flash executes: subagents get Flash's 65536 cap and speed. With
 # max_tokens=65536, Carbon's visible text stops at roughly 32K–34.8K tokens,
 # but thinking plus text can fill the full 65536-token output budget.
-ccp-gemini() { _ccp_gemini_magpie ccp-gemini gemini 'group/gemini-pro:high' 'group/gemini-flash:high' 65536 "$@"; }
+# No suffix on any slot (2026-11-19): Neon and Hydrogen both take xhigh, so CC's /effort and
+# each agent's own effort reach Magpie instead of a pinned :high.
+ccp-gemini() { _ccp_gemini_magpie ccp-gemini gemini 'group/gemini-pro' 'group/gemini-flash' 65536 "$@"; }
 
 # Zen and WorkBuddy free DeepSeek are retired. Magpie's ds-free group lists
 # Vultr (currently disabled), AMD Token Lab and Qoder. The launcher keeps

@@ -123,10 +123,11 @@ class ModelMapTest(unittest.TestCase):
     )
     self.assertIn("ccp-gemini-pro=group/gemini-pro:medium", result.stdout)
     self.assertEqual(set(dict(rows)["ccp-gemini-flash"][1:6]), {"group/gemini-flash:high"})
-    # The mixed launcher plans on Pro and hands Sonnet/Haiku/subagent work to Flash (2026-11-13).
+    # The mixed launcher plans on Pro and hands Sonnet/Haiku/subagent work to Flash (2026-11-13),
+    # with no effort suffix so CC's effort decides (2026-11-19).
     self.assertEqual(
       dict(rows)["ccp-gemini"][1:6],
-      ["group/gemini-pro:high", "group/gemini-pro:high", "group/gemini-pro:high", "group/gemini-flash:high", "group/gemini-flash:high"],
+      ["group/gemini-pro", "group/gemini-pro", "group/gemini-pro", "group/gemini-flash", "group/gemini-flash"],
     )
     self.assertNotIn("ccp-glm", [name for name, _ in rows])
     self.assertNotIn("ccp-mimo", [name for name, _ in rows])

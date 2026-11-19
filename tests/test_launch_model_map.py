@@ -167,7 +167,7 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
     # Flash (Hydrogen) answers up to 65536 per reply, Pro/Argon stop at 32768; the mixed
     # launcher takes Flash's cap so its subagents are not cut at 32768.
     expected = {
-      "ccp-gemini": (["group/gemini-pro:high"] * 3 + ["group/gemini-flash:high"] * 3, "65536"),
+      "ccp-gemini": (["group/gemini-pro"] * 3 + ["group/gemini-flash"] * 3, "65536"),
       "ccp-gemini-flash": (["group/gemini-flash:high"] * 6, "65536"),
       "ccp-gemini-pro": (["group/gemini-pro"] * 3 + ["group/gemini-pro:medium"] * 3, "32768"),
       "ccp-gemini-argon": (["google/gemini-4-argon:high"] * 6, "32768"),
