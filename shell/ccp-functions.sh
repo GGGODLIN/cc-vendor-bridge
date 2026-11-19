@@ -1293,6 +1293,12 @@ ccp-sol() {
   )
 }
 
+ccp-sol-ultra() {
+  local _CCP_GPT_MAIN_EFFORT=xhigh
+  local _CCP_GPT_SETTINGS='{"idleCompaction":false,"ultracode":true}'
+  ccp-sol "$@"
+}
+
 # ===== Magpie relay, Gemini role groups =====
 # `gemini-pro` uses a friend's paid Google key. `gemini-flash` tries Antigravity
 # first and falls back to that Google key.

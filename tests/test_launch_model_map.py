@@ -353,6 +353,31 @@ function /usr/bin/launchctl {{ launchctl "$@"; }}
           self.assertEqual(smart["argv"][-2:], ["--resume", "fixture-session"])
           self.assertNotIn("--fast", smart["argv"])
 
+  def test_sol_ultra_defaults_to_xhigh_ultracode_without_leaking_to_plain_sol(self):
+    for terminal, args in ((False, []), (True, []), (False, ["--fast", "--resume", "fixture-session"])):
+      with self.subTest(terminal=terminal, args=args):
+        self.records.unlink(missing_ok=True)
+        script = "ccp-sol-ultra " + " ".join(shlex.quote(arg) for arg in args) + "; ccp-sol"
+        status, output, _ = self.launch("ccp-sol-ultra", terminal=terminal, script=script)
+        self.assertEqual(status, 0, output)
+        ultra, plain = self.read_records()
+        self.assertEqual(ultra["slots"][:2], ["gpt-test-sol", "gpt-test-sol"])
+        self.assertEqual(ultra["slots"][3], "gpt-test-terra(max)")
+        for record, effort, expected_settings in (
+          (ultra, "xhigh", {"idleCompaction": False, "ultracode": True}),
+          (plain, "high", {"idleCompaction": False}),
+        ):
+          argv = record["argv"]
+          self.assertEqual(argv.count("--effort"), 1)
+          self.assertEqual(argv[argv.index("--effort") + 1], effort)
+          self.assertEqual(argv.count("--settings"), 1)
+          self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), expected_settings)
+        self.assertEqual(ultra["fast"], "--fast" in args)
+        self.assertFalse(plain["fast"])
+        if args:
+          self.assertEqual(ultra["argv"][-2:], ["--resume", "fixture-session"])
+          self.assertNotIn("--fast", ultra["argv"])
+
   def test_opus_maps_to_sol_without_fast_by_default(self):
     for entry, fleet in (("ccp-gpt", "gpt-test-luna(max)"), ("ccp-sol", "gpt-test-terra(max)")):
       with self.subTest(entry=entry):
