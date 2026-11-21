@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,11 +90,15 @@ def read_yaml(path):
 
 def downstream_model(name, base_url):
   candidates = (
-    ("8002", "CCP_FREE_AGENTROUTER_CONFIG_FILE", Path.home() / ".local/share/litellm-agentrouter/config/agentrouter.config.yaml"),
-    ("8000", "CCP_FREE_LITELLM_CONFIG_FILE", Path.home() / "Desktop/projects/local-llm-gateway/config/litellm.config.yaml"),
+    (8002, "CCP_FREE_AGENTROUTER_CONFIG_FILE", Path.home() / ".local/share/litellm-agentrouter/config/agentrouter.config.yaml"),
+    (8000, "CCP_FREE_LITELLM_CONFIG_FILE", Path.home() / "Desktop/projects/local-llm-gateway/config/litellm.config.yaml"),
   )
+  try:
+    parsed_port = urlsplit(base_url).port
+  except ValueError:
+    parsed_port = None
   for port, variable, default in candidates:
-    if f":{port}/" not in base_url:
+    if parsed_port != port:
       continue
     data = read_yaml(Path(os.environ.get(variable, str(default))))
     deployments = data.get("model_list")

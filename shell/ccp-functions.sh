@@ -102,7 +102,7 @@ _ccp_configure_split_auth() {
   if _ccp_model_map_preview || _ccp_has_claude_oauth; then
     unset ANTHROPIC_AUTH_TOKEN
   else
-    export ANTHROPIC_AUTH_TOKEN="$CLIPROXY_KEY_CC"
+    export ANTHROPIC_AUTH_TOKEN="${CLIPROXY_KEY_CC-}"
   fi
 }
 
@@ -110,18 +110,53 @@ _ccp_run_claude() {
   local launcher="$1"
   shift
   local -a args=("$@")
-  if (( ${args[(Ie)-test]} )); then
-    # -test loads the cc-unii memory experiment. A claude.ai Team login seats the
-    # org's security plugin, which skips every user plugin's session.compact hook,
-    # so this session runs on the relay key instead of the claude.ai login. This
-    # runs inside cc_fast_run's subshell, so the token does not leak to the shell.
-    if [[ -z "${CLIPROXY_KEY_CC-}" ]]; then
-      print -u2 -- '[ccp] -test needs CLIPROXY_KEY_CC (this launcher did not load the relay keys)'
-      return 1
+  local -a cleaned_args=()
+  local test_mode=0 passthrough=0 expect_val=0 arg
+  for arg in "${args[@]}"; do
+    if (( passthrough )); then
+      cleaned_args+=("$arg")
+      continue
+    fi
+    if (( expect_val )); then
+      cleaned_args+=("$arg")
+      expect_val=0
+      continue
+    fi
+    case "$arg" in
+      --)
+        passthrough=1
+        cleaned_args+=("$arg")
+        ;;
+      -p|--print)
+        passthrough=1
+        cleaned_args+=("$arg")
+        ;;
+      -test)
+        test_mode=1
+        ;;
+      *)
+        if _cc_flag_takes_value "$arg"; then
+          expect_val=1
+        fi
+        cleaned_args+=("$arg")
+        ;;
+    esac
+  done
+  if (( test_mode )); then
+    # -test loads the cc-unii memory experiment. For split-relay / native sessions,
+    # a claude.ai Team login seats the org's security plugin which skips every user
+    # plugin's session.compact hook, so those sessions switch to the relay key.
+    # Direct vendor launchers keep their own ANTHROPIC_AUTH_TOKEN untouched.
+    local split_url="${CC_SPLIT_BASE_URL:-http://127.0.0.1:8318}"
+    if [[ "${ANTHROPIC_BASE_URL-}" == "$split_url" ]]; then
+      if [[ -z "${CLIPROXY_KEY_CC-}" ]]; then
+        print -u2 -- '[ccp] -test needs CLIPROXY_KEY_CC (this launcher did not load the relay keys)'
+        return 1
+      fi
+      export ANTHROPIC_AUTH_TOKEN="$CLIPROXY_KEY_CC"
     fi
     local root="${CCP_TEST_DIR:-$HOME/Desktop/projects/cc-unii-memory}"
-    args=(--plugin-dir "$root/plugin" --plugin-dir "$root/trigger" "${(@)args:#-test}")
-    export ANTHROPIC_AUTH_TOKEN="$CLIPROXY_KEY_CC"
+    args=(--plugin-dir "$root/plugin" --plugin-dir "$root/trigger" "${cleaned_args[@]}")
   fi
   set -- "${args[@]}"
   if _ccp_model_map_preview; then
@@ -178,13 +213,23 @@ _ccp_refresh_gpt_models() {
 _ccp_refresh_gpt_models || true
 
 _ccp_effort_for_model() {
-  case "$1" in
-    ${GPT_ASTRA}*) print -r -- medium ;;
-    # 5.6 keeps xhigh so rolling GPT_SOL back restores the old behavior. 6.1 peaks at high:
-    # OpenAI's DeepSWE chart has it at 75.2% on high vs 71.9% on both xhigh and max.
+  local m="${1-}"
+  [[ -z "$m" ]] && { print -r -- ""; return 0; }
+  if [[ -n "${GPT_ASTRA-}" && "$m" == ${GPT_ASTRA}* ]]; then
+    print -r -- medium
+    return 0
+  fi
+  # 5.6 keeps xhigh so rolling GPT_SOL back restores the old behavior. 6.1 peaks at high:
+  # OpenAI's DeepSWE chart has it at 75.2% on high vs 71.9% on both xhigh and max.
+  case "$m" in
     gpt-5.6-sol*) print -r -- xhigh ;;
-    ${GPT_SOL}*) print -r -- high ;;
-    *) print -r -- "" ;;
+    *)
+      if [[ -n "${GPT_SOL-}" && "$m" == ${GPT_SOL}* ]]; then
+        print -r -- high
+      else
+        print -r -- ""
+      fi
+      ;;
   esac
 }
 
@@ -196,7 +241,7 @@ _ccp_gpt_label() {
 # ===== DeepSeek V4-Pro =====
 # Source: https://api-docs.deepseek.com/zh-cn/quick_start/agent_integrations/claude_code
 ccp-deepseek() {
-  if ! _ccp_model_map_preview && [[ -z "$DEEPSEEK_API_KEY" ]]; then
+  if ! _ccp_model_map_preview && [[ -z "${DEEPSEEK_API_KEY-}" ]]; then
     echo "ccp-deepseek: DEEPSEEK_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
@@ -218,9 +263,10 @@ ccp-deepseek() {
   fi
 
   (
+    unset ANTHROPIC_API_KEY
     export CC_VENDOR=deepseek
     export ANTHROPIC_BASE_URL=http://127.0.0.1:9091
-    export ANTHROPIC_AUTH_TOKEN=$DEEPSEEK_API_KEY
+    export ANTHROPIC_AUTH_TOKEN="${DEEPSEEK_API_KEY-}"
     export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-deepseek-v4-pro}
     export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-deepseek-v4-pro}
     export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-deepseek-v4-pro}
@@ -324,7 +370,7 @@ ccp-deepseek-pro() {
 #
 # ⚠️ 2026-09 review：promo 結束時重評 5.2 全配對 2-3× 成本是否還划算
 ccp-glm() {
-  if [[ -z "$ZAI_API_KEY" ]]; then
+  if [[ -z "${ZAI_API_KEY-}" ]]; then
     echo "ccp-glm: ZAI_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
@@ -394,14 +440,15 @@ ccp-glm() {
 # ===== Xiaomi MiMo V2.5-Pro Token Plan (Singapore subscription) =====
 # Source: https://token-plan-sgp.xiaomimimo.com/
 ccp-mimo() {
-  if [[ -z "$MIMO_SUB_API_KEY" ]]; then
+  if [[ -z "${MIMO_SUB_API_KEY-}" ]]; then
     echo "ccp-mimo: MIMO_SUB_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
   (
+    unset ANTHROPIC_API_KEY
     export CC_VENDOR=mimo
     export ANTHROPIC_BASE_URL=https://token-plan-sgp.xiaomimimo.com/anthropic
-    export ANTHROPIC_AUTH_TOKEN=$MIMO_SUB_API_KEY
+    export ANTHROPIC_AUTH_TOKEN="${MIMO_SUB_API_KEY-}"
     export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-mimo-v2.5-pro}
     export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-mimo-v2.5-pro}
     export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-mimo-v2.5-pro}
@@ -417,14 +464,15 @@ ccp-mimo() {
 # ===== Xiaomi MiMo V2.5-Pro (international PAYG) =====
 # Source: https://platform.xiaomimimo.com/
 ccp-mimo-payg() {
-  if [[ -z "$MIMO_API_KEY" ]]; then
+  if [[ -z "${MIMO_API_KEY-}" ]]; then
     echo "ccp-mimo-payg: MIMO_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
   (
+    unset ANTHROPIC_API_KEY
     export CC_VENDOR=mimo-payg
     export ANTHROPIC_BASE_URL=https://api.xiaomimimo.com/anthropic
-    export ANTHROPIC_AUTH_TOKEN=$MIMO_API_KEY
+    export ANTHROPIC_AUTH_TOKEN="${MIMO_API_KEY-}"
     export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-mimo-v2.5-pro}
     export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-mimo-v2.5-pro}
     export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-mimo-v2.5-pro}
@@ -463,14 +511,14 @@ ccp-bruce() {
     return 1
   fi
   local _CCP_GPT_REFRESHED=1
-  if ! _ccp_model_map_preview && [[ -z "$BRUCE_API_KEY" ]]; then
+  if ! _ccp_model_map_preview && [[ -z "${BRUCE_API_KEY-}" ]]; then
     echo "ccp-bruce: BRUCE_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
   (
     export CC_VENDOR=bruce
     export ANTHROPIC_BASE_URL=https://api.bruceai.net
-    export ANTHROPIC_AUTH_TOKEN=$BRUCE_API_KEY
+    export ANTHROPIC_AUTH_TOKEN="${BRUCE_API_KEY-}"
     unset ANTHROPIC_API_KEY  # Bruce docs: must use AUTH_TOKEN, NOT API_KEY
     # Per-call model override is supported, but a stray claude-* value from the outer
     # shell must not survive: CC's claude-* aliases carry Anthropic-only routing that
@@ -488,11 +536,11 @@ ccp-bruce() {
     # NOTE the effort suffix ccp-gpt uses — `gpt-5.6-luna(max)` — is CLIProxyAPI syntax.
     # Bruce rejects it: 400 `Model "requested model(max)" is not supported`. Effort
     # travels in output_config instead, via the --effort flag below.
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-$GPT_SOL}
-    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_SOL}
-    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_SOL}
-    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-$GPT_LUNA}
-    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$GPT_LUNA}
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-${GPT_SOL-}}
+    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-${GPT_SOL-}}
+    export ANTHROPIC_DEFAULT_OPUS_MODEL=${ANTHROPIC_DEFAULT_OPUS_MODEL:-${GPT_SOL-}}
+    export ANTHROPIC_DEFAULT_SONNET_MODEL=${ANTHROPIC_DEFAULT_SONNET_MODEL:-${GPT_LUNA-}}
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${GPT_LUNA-}}
     # Deliberately NOT setting CLAUDE_CODE_SUBAGENT_MODEL: leaving it unset lets the
     # slot mapping do the routing, so ~/.claude/agents/routed-*.md land where the policy
     # says (routed-impl/judge/secure = opus → sol, routed-mech = sonnet → luna).
@@ -583,7 +631,7 @@ ccp-bruce() {
 #   ccp-bruce-status              # human-readable snapshot
 #   ccp-bruce-status --json       # merged raw JSON ({usage, pool})
 ccp-bruce-status() {
-  if [[ -z "$BRUCE_API_KEY" ]]; then
+  if [[ -z "${BRUCE_API_KEY-}" ]]; then
     echo "ccp-bruce-status: BRUCE_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
@@ -645,7 +693,7 @@ ccp-bruce-status() {
 # 100% 2xx while health swung 86.67% → 20%. Logic folded into watch;
 # correlate retired.
 ccp-bruce-watch() {
-  if [[ -z "$BRUCE_API_KEY" ]]; then
+  if [[ -z "${BRUCE_API_KEY-}" ]]; then
     echo "ccp-bruce-watch: BRUCE_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
@@ -691,7 +739,7 @@ ccp-bruce-watch() {
 #     `-c model=gpt-5.6-sol`, or in the Codex TUI via /model. Supported ids:
 #     gpt-5.6-sol / -terra / -luna / gpt-5.5 / gpt-5.4 / gpt-5.4-mini.
 codex-bruce() {
-  if [[ -z "$BRUCE_API_KEY" ]]; then
+  if [[ -z "${BRUCE_API_KEY-}" ]]; then
     echo "codex-bruce: BRUCE_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
@@ -732,11 +780,11 @@ codex-bruce() {
 #     image_generation, goals, tool_suggest, web_search. Agentic capability
 #     half-crippled vs native — use for fallback, not as daily driver.
 codex-glm() {
-  if [[ -z "$ZAI_API_KEY" ]]; then
+  if [[ -z "${ZAI_API_KEY-}" ]]; then
     echo "codex-glm: ZAI_API_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
-  if [[ -z "$LITELLM_MASTER_KEY" ]]; then
+  if [[ -z "${LITELLM_MASTER_KEY-}" ]]; then
     echo "codex-glm: LITELLM_MASTER_KEY not set. See shell/secrets.example" >&2
     return 1
   fi
@@ -790,7 +838,7 @@ ccp-local() {
     echo "      rapid-mlx serve qwen3.6-35b --no-thinking --tool-call-parser qwen3_coder_xml --enable-auto-tool-choice --port 8002 --api-key local" >&2
     return 1
   fi
-  local model="${LOCAL_MODEL}"
+  local model="${LOCAL_MODEL-}"
   if [[ -z "$model" ]]; then
     model=$(curl -sf -m 3 "$v1/models" -H "Authorization: Bearer local" 2>/dev/null | python3 -c '
 import json, sys
@@ -824,6 +872,7 @@ except Exception:
   fi
   echo "ccp-local: model=$model n_ctx=$n_ctx" >&2
   (
+    unset ANTHROPIC_API_KEY
     export CC_VENDOR=rapid-mlx
     export ANTHROPIC_BASE_URL="$url"
     # `not-needed` 是 rapid-mlx 時期 placeholder (rapid-mlx 不校驗 api key)。
@@ -920,7 +969,7 @@ ccp-gpt-whoami() {
   local mgmt_json
   mgmt_json=$(
     source ~/.cli-proxy-api/keys.env 2>/dev/null
-    curl -s --max-time 5 -H "Authorization: Bearer ${CLIPROXY_MGMT_KEY}" \
+    curl -s --max-time 5 -H "Authorization: Bearer ${CLIPROXY_MGMT_KEY-}" \
       "${CLIPROXY_BASE_URL:-http://127.0.0.1:8317}/v0/management/auth-files"
   )
   if [[ -z "$mgmt_json" ]]; then
@@ -1058,8 +1107,7 @@ ccp-relay-priority-apply() {
       jq -e --arg e "$email" '.email == $e' "$f" >/dev/null 2>&1 || continue
       jq -e --argjson p "$prio" '.priority == $p' "$f" >/dev/null 2>&1 && continue
       tmp="${f}.tmp.$$"
-      if jq --argjson p "$prio" '.priority = $p' "$f" > "$tmp" 2>/dev/null; then
-        chmod 600 "$tmp" && mv "$tmp" "$f"
+      if ( umask 077 && jq --argjson p "$prio" '.priority = $p' "$f" > "$tmp" 2>/dev/null ) && chmod 600 "$tmp" && mv "$tmp" "$f"; then
         print -P "%F{green}[ccp-relay] priority ${prio} 已補回 ${email} (${f:t})%f" >&2
         applied=1
       else
@@ -1121,10 +1169,11 @@ ccp-gpt() {
   _ccp_model_map_preview || ccp-gpt-whoami
   (
     _ccp_model_map_preview || source ~/.cli-proxy-api/keys.env
+    local GPT_ASTRA="${GPT_ASTRA-}" GPT_SOL="${GPT_SOL-}" GPT_LUNA="${GPT_LUNA-}"
     export CC_VENDOR=gpt
     _ccp_configure_split_auth
-    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-$GPT_ASTRA}
-    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_ASTRA}
+    export ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-${GPT_ASTRA-}}
+    export ANTHROPIC_DEFAULT_FABLE_MODEL=${ANTHROPIC_DEFAULT_FABLE_MODEL:-${GPT_ASTRA-}}
     # No effort suffix on Opus: judge-class agents pin their own effort, and a
     # suffix would override it at the relay.
     export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$GPT_SOL}"
@@ -1138,7 +1187,7 @@ ccp-gpt() {
     # touching the cross-vendor routing policy.
     export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-${GPT_LUNA}(max)}"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${GPT_LUNA}(max)}"
-    export ANTHROPIC_CUSTOM_MODEL_OPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION:-${GPT_ASTRA}-fast}
+    export ANTHROPIC_CUSTOM_MODEL_OPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION:-${GPT_ASTRA-}-fast}
     export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME=${ANTHROPIC_CUSTOM_MODEL_OPTION_NAME:-GPT-6\ Astra\ Fast}
     export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=${ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION:-Priority\ tier\ for\ the\ main\ agent}
     export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=${CLAUDE_CODE_ALWAYS_ENABLE_EFFORT:-1}
@@ -1259,12 +1308,12 @@ ccp-gpt-smart() {
     else
       unset ANTHROPIC_CUSTOM_HEADERS
     fi
-    ANTHROPIC_MODEL=$GPT_ASTRA \
-    ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_ASTRA \
-    ANTHROPIC_DEFAULT_OPUS_MODEL=$GPT_SOL \
-    ANTHROPIC_DEFAULT_SONNET_MODEL=$GPT_SOL \
-    ANTHROPIC_DEFAULT_HAIKU_MODEL=$GPT_SOL \
-    CLAUDE_CODE_SUBAGENT_MODEL=$GPT_SOL \
+    ANTHROPIC_MODEL=${GPT_ASTRA-} \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=${GPT_ASTRA-} \
+    ANTHROPIC_DEFAULT_OPUS_MODEL=${GPT_SOL-} \
+    ANTHROPIC_DEFAULT_SONNET_MODEL=${GPT_SOL-} \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL=${GPT_SOL-} \
+    CLAUDE_CODE_SUBAGENT_MODEL=${GPT_SOL-} \
       ccp-gpt "$@"
   )
 }
@@ -1279,16 +1328,16 @@ ccp-sol() {
   fi
   local _CCP_GPT_REFRESHED=1
   (
-    if [[ "$GPT_SOL" == gpt-6.2-sol ]]; then
+    if [[ "${GPT_SOL-}" == gpt-6.2-sol ]]; then
       export CLAUDE_CODE_MAX_CONTEXT_TOKENS=${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-872000}
       export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-784800}
     fi
-    ANTHROPIC_MODEL=$GPT_SOL \
-    ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_SOL \
-    ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-${GPT_TERRA}(max)}" \
-    ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${GPT_TERRA}(max)}" \
-    ANTHROPIC_CUSTOM_MODEL_OPTION=${GPT_SOL}-fast \
-    ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="$(_ccp_gpt_label "$GPT_SOL") Fast" \
+    ANTHROPIC_MODEL=${GPT_SOL-} \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=${GPT_SOL-} \
+    ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-${GPT_TERRA-}(max)}" \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${GPT_TERRA-}(max)}" \
+    ANTHROPIC_CUSTOM_MODEL_OPTION=${GPT_SOL-}-fast \
+    ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="$(_ccp_gpt_label "${GPT_SOL-}") Fast" \
       ccp-gpt "$@"
   )
 }
@@ -2153,18 +2202,18 @@ ccp-mix-gpt() {
     # them a 1M window instead and is stripped before sending; compaction is then held
     # at ccp-gpt's 900K, under the ~922K backend ceiling. Other main overrides keep
     # 480K because their real ceiling is unknown here.
-    local main_model="${ANTHROPIC_MODEL:-$GPT_ASTRA}"
+    local main_model="${ANTHROPIC_MODEL:-${GPT_ASTRA-}}"
     local main_label="$main_model"
     local main_base="${main_model%\[1m\]}"
     local main_is_gpt_tier=''
-    if [[ "$main_base" == ($GPT_ASTRA|$GPT_SOL|$GPT_LUNA) ]]; then
+    if [[ -n "$main_base" && "$main_base" == (${GPT_ASTRA-}|${GPT_SOL-}|${GPT_LUNA-}) ]]; then
       main_is_gpt_tier=1
       main_label="$(_ccp_gpt_label "$main_base")"
       main_model="${main_base}[1m]"
     fi
-    local fable_model="${ANTHROPIC_DEFAULT_FABLE_MODEL:-$GPT_ASTRA}"
+    local fable_model="${ANTHROPIC_DEFAULT_FABLE_MODEL:-${GPT_ASTRA-}}"
     local fable_base="${fable_model%\[1m\]}"
-    [[ "$fable_base" == ($GPT_ASTRA|$GPT_SOL|$GPT_LUNA) ]] && fable_model="${fable_base}[1m]"
+    [[ -n "$fable_base" && "$fable_base" == (${GPT_ASTRA-}|${GPT_SOL-}|${GPT_LUNA-}) ]] && fable_model="${fable_base}[1m]"
     print -P "%F{green}[ccp-mix-gpt] Main：${main_label}%f" >&2
     _ccp_model_map_preview || ccp-free-whoami ccp-mix-gpt
     unset ANTHROPIC_FALLBACK_MODEL CLAUDE_CODE_FALLBACK_MODEL DISABLE_COMPACT
@@ -2207,11 +2256,11 @@ ccp-mix-sol() {
   fi
   local _CCP_GPT_REFRESHED=1
   (
-    if [[ "$GPT_SOL" == gpt-6.2-sol ]]; then
+    if [[ "${GPT_SOL-}" == gpt-6.2-sol ]]; then
       export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-784800}
     fi
-    ANTHROPIC_MODEL=$GPT_SOL \
-    ANTHROPIC_DEFAULT_FABLE_MODEL=$GPT_SOL \
+    ANTHROPIC_MODEL=${GPT_SOL-} \
+    ANTHROPIC_DEFAULT_FABLE_MODEL=${GPT_SOL-} \
       ccp-mix-gpt "$@"
   )
 }
@@ -2283,7 +2332,7 @@ ccp-resume() {
     *)                 vendor="unknown" ;;
   esac
 
-  if [[ -n "$CC_VENDOR" && "$CC_VENDOR" != "$vendor" ]]; then
+  if [[ -n "${CC_VENDOR-}" && "${CC_VENDOR-}" != "$vendor" ]]; then
     echo "⚠️  [ccp-resume] 當前 \$CC_VENDOR=$CC_VENDOR, target session model=$model (vendor=$vendor)" >&2
     echo "    cross-vendor resume 會炸 thinking signature (docs/caveats.md §11)" >&2
     printf "    強制繼續? [y/N]: " >&2

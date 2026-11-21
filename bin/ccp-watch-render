@@ -1,117 +1,149 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # ccp-watch-render — stdin: NDJSON stream from `claude -p --output-format stream-json`
 # stdout: human-readable live render of the agent loop.
 #
 # Robustness:
-#   - Pre-filter with `grep '^{'` so stray non-JSON lines (stderr leaks) never reach jq.
+#   - Skips non-JSON lines (stderr leaks) without aborting the stream.
 #   - Unknown event types render as faint breadcrumbs (`? <type>`) instead of silent drops.
 #   - All system/<subtype> events render (not just init).
-#   - EOF sentinel (`{"type":"ccp_watch_eof"}`) lets the upstream wrapper terminate the
-#     tail|jq|while pipeline cleanly so the side pane returns to a normal prompt.
+#   - EOF sentinel (`{"type":"ccp_watch_eof"}`) lets the upstream wrapper terminate
+#     cleanly so the side pane returns to a normal prompt.
 
-set -u
+import json
+import sys
 
-DIM='\033[2m'
-BOLD='\033[1m'
-CYAN='\033[36m'
-YELLOW='\033[33m'
-MAGENTA='\033[35m'
-GREEN='\033[32m'
-RED='\033[31m'
-RESET='\033[0m'
+DIM = "\033[2m"
+BOLD = "\033[1m"
+CYAN = "\033[36m"
+YELLOW = "\033[33m"
+MAGENTA = "\033[35m"
+GREEN = "\033[32m"
+RESET = "\033[0m"
 
-JQ_FILTER='
-  if .type == "ccp_watch_eof" then
-    "EOF\t\t" | halt
 
-  elif .type == "system" and .subtype == "init" then
-    "SYS_INIT\t" + (.session_id // "?") + "\t" + (.model // "?") + "\t" + (.cwd // "?")
+def emit(text: str) -> None:
+  sys.stdout.write(text)
+  sys.stdout.flush()
 
-  elif .type == "system" then
-    "SYS\t" + (.subtype // "?") + "\t" + (.hook_event_name // .source // "")
 
-  elif .type == "stream_event" and .event.type == "content_block_start" then
-    (.event.content_block.type // "?") as $bt |
-    if $bt == "thinking" then "BLK_START\tthinking\t"
-    elif $bt == "text" then "BLK_START\ttext\t"
-    elif $bt == "tool_use" then "BLK_START\ttool_use\t" + (.event.content_block.name // "?")
-    else "BLK_START\t" + $bt + "\t" end
+def main() -> int:
+  if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+  if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+  while True:
+    raw = sys.stdin.readline()
+    if not raw:
+      break
+    line = raw.strip()
+    if not line.startswith("{"):
+      continue
+    try:
+      ev = json.loads(line)
+    except json.JSONDecodeError:
+      continue
+    if not isinstance(ev, dict):
+      continue
 
-  elif .type == "stream_event" and .event.type == "content_block_delta" then
-    (.event.delta.type // "?") as $dt |
-    if $dt == "thinking_delta" then "DELTA\tthinking\t" + (.event.delta.thinking // "")
-    elif $dt == "text_delta" then "DELTA\ttext\t" + (.event.delta.text // "")
-    elif $dt == "input_json_delta" then "DELTA\ttool_input\t" + (.event.delta.partial_json // "")
-    elif $dt == "signature_delta" then empty
-    else "DELTA\tunknown:" + $dt + "\t…" end
+    ev_type = ev.get("type")
+    if ev_type == "ccp_watch_eof":
+      emit(f"{DIM}──── stream end ────{RESET}\n")
+      return 0
 
-  elif .type == "stream_event" and .event.type == "content_block_stop" then "BLK_STOP\t\t"
-  elif .type == "stream_event" and .event.type == "message_stop" then "MSG_STOP\t\t"
-  elif .type == "stream_event" and (.event.type == "message_start" or .event.type == "message_delta" or .event.type == "ping") then empty
-  elif .type == "stream_event" then "UNK\tstream_event/" + (.event.type // "?") + "\t"
+    if ev_type == "system":
+      subtype = ev.get("subtype") or "?"
+      if subtype == "init":
+        sid = str(ev.get("session_id") or "?")[:8]
+        model = str(ev.get("model") or "?")
+        cwd = str(ev.get("cwd") or "?")
+        emit(
+          f"\n{BOLD}{CYAN}┌─ ccp-watch ─────────────────────{RESET}\n"
+          f"{DIM}│ session: {sid}…  model: {model}{RESET}\n"
+          f"{DIM}│ cwd: {cwd}{RESET}\n"
+          f"{BOLD}{CYAN}└─{RESET}\n"
+        )
+      else:
+        detail = str(ev.get("hook_event_name") or ev.get("source") or "")
+        if detail:
+          emit(f"{DIM}· system/{subtype} {detail}{RESET}\n")
+        else:
+          emit(f"{DIM}· system/{subtype}{RESET}\n")
+      continue
 
-  elif .type == "assistant" then empty
+    if ev_type == "stream_event":
+      event = ev.get("event")
+      if not isinstance(event, dict):
+        emit(f"{DIM}? stream_event/?{RESET}\n")
+        continue
+      et = event.get("type")
+      if et == "content_block_start":
+        cb = event.get("content_block")
+        cb = cb if isinstance(cb, dict) else {}
+        bt = cb.get("type") or "?"
+        if bt == "thinking":
+          emit(f"\n{MAGENTA}▶ thinking{RESET}\n  {DIM}")
+        elif bt == "text":
+          emit(f"\n{GREEN}▶ text{RESET}\n  ")
+        elif bt == "tool_use":
+          tname = str(cb.get("name") or "?")
+          emit(f"\n{YELLOW}▶ tool: {BOLD}{tname}{RESET}\n  {DIM}")
+        else:
+          emit(f"\n{DIM}▶ {bt}{RESET}\n  ")
+      elif et == "content_block_delta":
+        delta = event.get("delta")
+        delta = delta if isinstance(delta, dict) else {}
+        dt = delta.get("type") or "?"
+        if dt == "thinking_delta":
+          emit(str(delta.get("thinking") or ""))
+        elif dt == "text_delta":
+          emit(str(delta.get("text") or ""))
+        elif dt == "input_json_delta":
+          emit(str(delta.get("partial_json") or ""))
+        elif dt == "signature_delta":
+          pass
+        else:
+          emit("…")
+      elif et == "content_block_stop":
+        emit(f"{RESET}\n")
+      elif et == "message_stop":
+        emit(f"{DIM}──── turn end ────{RESET}\n")
+      elif et in ("message_start", "message_delta", "ping"):
+        pass
+      else:
+        emit(f"{DIM}? stream_event/{et or '?'}{RESET}\n")
+      continue
 
-  elif .type == "result" then
-    "RESULT\t" + (.duration_ms|tostring) + "\t" + (.num_turns|tostring) + "\t" + ((.total_cost_usd // 0)|tostring) + "\t" + (.subtype // "?")
+    if ev_type == "assistant":
+      continue
 
-  elif .type == "rate_limit_event" then
-    "RATE\t" + (.message.status // "?") + "\t" + (.message.rateLimitType // "?")
+    if ev_type == "result":
+      dur_ms = ev.get("duration_ms") or 0
+      num_turns = ev.get("num_turns") if ev.get("num_turns") is not None else "?"
+      cost_val = ev.get("total_cost_usd")
+      cost_num = float(cost_val) if isinstance(cost_val, (int, float)) else 0.0
+      dur_num = float(dur_ms) / 1000.0 if isinstance(dur_ms, (int, float)) else 0.0
+      subtype = str(ev.get("subtype") or "?")
+      emit(
+        f"\n{BOLD}{CYAN}┌─ result ({subtype}) ─────────────────{RESET}\n"
+        f"{BOLD}{CYAN}│ {RESET}duration: {dur_num:.1f}s   turns: {num_turns}   cost: ${cost_num:.4f}\n"
+        f"{BOLD}{CYAN}└─{RESET}\n"
+      )
+      continue
 
-  else "UNK\t" + (.type // "no-type") + "\t" end
-'
+    if ev_type == "rate_limit_event":
+      msg = ev.get("message")
+      msg = msg if isinstance(msg, dict) else {}
+      status = str(msg.get("status") or "?")
+      rlt = str(msg.get("rateLimitType") or "?")
+      emit(f"{DIM}[rate-limit: {status} / {rlt}]{RESET}\n")
+      continue
 
-# Pre-filter non-JSON lines so jq does not abort the pipeline on stderr noise
-grep --line-buffered '^{' \
-  | jq -r --unbuffered "${JQ_FILTER}" \
-  | while IFS=$'\t' read -r tag a b c d; do
-  case "$tag" in
-    SYS_INIT)
-      printf "\n${BOLD}${CYAN}┌─ ccp-watch ─────────────────────${RESET}\n"
-      printf "${DIM}│ session: ${a:0:8}…  model: ${b}${RESET}\n"
-      printf "${DIM}│ cwd: ${c}${RESET}\n"
-      printf "${BOLD}${CYAN}└─${RESET}\n"
-      ;;
-    SYS)
-      if [[ -n "${b:-}" ]]; then
-        printf "${DIM}· system/${a} ${b}${RESET}\n"
-      else
-        printf "${DIM}· system/${a}${RESET}\n"
-      fi
-      ;;
-    BLK_START)
-      case "$a" in
-        thinking) printf "\n${MAGENTA}▶ thinking${RESET}\n  ${DIM}" ;;
-        text)     printf "\n${GREEN}▶ text${RESET}\n  " ;;
-        tool_use) printf "\n${YELLOW}▶ tool: ${BOLD}${b}${RESET}\n  ${DIM}" ;;
-        *)        printf "\n${DIM}▶ ${a}${RESET}\n  " ;;
-      esac
-      ;;
-    DELTA)
-      printf "%s" "$b"
-      ;;
-    BLK_STOP)
-      printf "${RESET}\n"
-      ;;
-    MSG_STOP)
-      printf "${DIM}──── turn end ────${RESET}\n"
-      ;;
-    RESULT)
-      dur_s=$(awk -v ms="$a" 'BEGIN{printf "%.1f", ms/1000}')
-      cost=$(awk -v c="$c" 'BEGIN{printf "%.4f", c}')
-      printf "\n${BOLD}${CYAN}┌─ result (${d}) ─────────────────${RESET}\n"
-      printf "${BOLD}${CYAN}│ ${RESET}duration: ${dur_s}s   turns: ${b}   cost: \$${cost}\n"
-      printf "${BOLD}${CYAN}└─${RESET}\n"
-      ;;
-    RATE)
-      printf "${DIM}[rate-limit: ${a} / ${b}]${RESET}\n"
-      ;;
-    EOF)
-      printf "${DIM}──── stream end ────${RESET}\n"
-      exit 0
-      ;;
-    UNK)
-      printf "${DIM}? ${a}${RESET}\n"
-      ;;
-  esac
-done
+    emit(f"{DIM}? {ev_type or 'no-type'}{RESET}\n")
+  return 0
+
+
+if __name__ == "__main__":
+  try:
+    raise SystemExit(main())
+  except BrokenPipeError:
+    raise SystemExit(0)

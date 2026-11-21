@@ -25,6 +25,11 @@ if [ -z "$QUERY" ]; then
   exit 1
 fi
 
+if [[ ! "$N" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: numResults must be a positive integer (got: $N)" >&2
+  exit 1
+fi
+
 KEY=$(security find-generic-password -s EXA_API_KEY -w 2>/dev/null || true)
 TAVILY_KEY_FILE="$HOME/.config/tavily/api-key"
 TAVILY_KEY=""
@@ -37,10 +42,10 @@ if [ -z "$KEY" ] && [ -z "$TAVILY_KEY" ]; then
   exit 2
 fi
 
-bodyfile=$(mktemp /tmp/exa-body.XXXX)
+bodyfile=$(mktemp "${TMPDIR:-/tmp}/exa-body.XXXXXX")
 trap 'rm -f "$bodyfile"' EXIT
 
-status=0
+status="000"
 used_engine=""
 
 if [ -n "$KEY" ] && [ "${EXA_FORCE_FALLBACK:-0}" != "1" ]; then
@@ -51,8 +56,9 @@ if [ -n "$KEY" ] && [ "${EXA_FORCE_FALLBACK:-0}" != "1" ]; then
     -H "x-api-key: $KEY" \
     -H "Content-Type: application/json" \
     --max-time 30 \
-    -d "$payload" 2>/dev/null || echo 000)
-  if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+    -d "$payload" 2>/dev/null) || true
+  [[ "$status" =~ ^[0-9]{3}$ ]] || status="000"
+  if [ "$((10#$status))" -ge 200 ] && [ "$((10#$status))" -lt 300 ]; then
     used_engine="exa"
   fi
 fi
@@ -65,8 +71,9 @@ if [ -z "$used_engine" ] && [ -n "$TAVILY_KEY" ]; then
     -H "Authorization: Bearer $TAVILY_KEY" \
     -H "Content-Type: application/json" \
     --max-time 30 \
-    -d "$t_payload" 2>/dev/null || echo 000)
-  if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+    -d "$t_payload" 2>/dev/null) || true
+  [[ "$status" =~ ^[0-9]{3}$ ]] || status="000"
+  if [ "$((10#$status))" -ge 200 ] && [ "$((10#$status))" -lt 300 ]; then
     used_engine="tavily"
   fi
 fi

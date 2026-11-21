@@ -52,20 +52,37 @@ CRITICAL_BELOW=0
 STAB_WARN_BELOW=80
 STAB_ALERT_BELOW=70
 STAB_CRITICAL_BELOW=50
-URL="https://api.bruceai.net/v1/pool/status"
+URL="${CCP_BRUCE_WATCH_URL:-https://api.bruceai.net/v1/pool/status}"
+MAX_PROBES="${CCP_BRUCE_WATCH_MAX_PROBES:-0}"
 LOG_DIR="${HOME}/.claude/logs"
 LOG_FILE="${LOG_DIR}/bruce-pool-health.jsonl"
+CURRENT_BODY_FILE=""
+
+require_arg() {
+  if [[ $# -lt 2 || -z "${2:-}" ]]; then
+    echo "ccp-bruce-watch: $1 requires an argument" >&2
+    exit 1
+  fi
+}
+
+validate_uint() {
+  local name="$1" val="$2"
+  if [[ ! "$val" =~ ^[0-9]+$ ]]; then
+    echo "ccp-bruce-watch: $name must be a non-negative integer (got '$val')" >&2
+    exit 1
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --interval)             INTERVAL="$2";             shift 2 ;;
-    --timeout)              TIMEOUT="$2";              shift 2 ;;
-    --warn-below)           WARN_BELOW="$2";           shift 2 ;;
-    --alert-below)          ALERT_BELOW="$2";          shift 2 ;;
-    --critical-below)       CRITICAL_BELOW="$2";       shift 2 ;;
-    --stab-warn-below)      STAB_WARN_BELOW="$2";      shift 2 ;;
-    --stab-alert-below)     STAB_ALERT_BELOW="$2";     shift 2 ;;
-    --stab-critical-below)  STAB_CRITICAL_BELOW="$2";  shift 2 ;;
+    --interval)             require_arg "$@"; INTERVAL="$2";             shift 2 ;;
+    --timeout)              require_arg "$@"; TIMEOUT="$2";              shift 2 ;;
+    --warn-below)           require_arg "$@"; WARN_BELOW="$2";           shift 2 ;;
+    --alert-below)          require_arg "$@"; ALERT_BELOW="$2";          shift 2 ;;
+    --critical-below)       require_arg "$@"; CRITICAL_BELOW="$2";       shift 2 ;;
+    --stab-warn-below)      require_arg "$@"; STAB_WARN_BELOW="$2";      shift 2 ;;
+    --stab-alert-below)     require_arg "$@"; STAB_ALERT_BELOW="$2";     shift 2 ;;
+    --stab-critical-below)  require_arg "$@"; STAB_CRITICAL_BELOW="$2";  shift 2 ;;
     -h|--help)
       sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -73,6 +90,16 @@ while [[ $# -gt 0 ]]; do
     *) echo "ccp-bruce-watch: unknown arg $1" >&2; exit 1 ;;
   esac
 done
+
+validate_uint "--interval" "$INTERVAL"
+validate_uint "--timeout" "$TIMEOUT"
+validate_uint "--warn-below" "$WARN_BELOW"
+validate_uint "--alert-below" "$ALERT_BELOW"
+validate_uint "--critical-below" "$CRITICAL_BELOW"
+validate_uint "--stab-warn-below" "$STAB_WARN_BELOW"
+validate_uint "--stab-alert-below" "$STAB_ALERT_BELOW"
+validate_uint "--stab-critical-below" "$STAB_CRITICAL_BELOW"
+validate_uint "CCP_BRUCE_WATCH_MAX_PROBES" "$MAX_PROBES"
 
 : "${BRUCE_API_KEY:?BRUCE_API_KEY not set; source shell/ccp-functions.sh first}"
 command -v jq >/dev/null || { echo "ccp-bruce-watch: jq not found" >&2; exit 1; }
@@ -103,6 +130,10 @@ STAB_CRITICAL_FIRED=0
 ENDPOINT_ALERTED=0
 
 cleanup() {
+  if [[ -n "${CURRENT_BODY_FILE:-}" ]]; then
+    rm -f "$CURRENT_BODY_FILE"
+    CURRENT_BODY_FILE=""
+  fi
   local elapsed=$(( $(date +%s) - START_TS ))
   echo
   printf '%s[ccp-bruce-watch stopped]%s started %s · ran %ds · %d probes · %d endpoint errors\n' \
@@ -117,6 +148,16 @@ cleanup() {
   exit 0
 }
 trap cleanup INT TERM HUP
+
+now_ms() {
+  if command -v perl >/dev/null 2>&1; then
+    perl -MTime::HiRes=gettimeofday -e 'my ($s,$u)=gettimeofday; printf "%d\n", $s*1000 + int($u/1000)'
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import time; print(time.time_ns() // 1000000)'
+  else
+    printf '%s000\n' "$(date +%s)"
+  fi
+}
 
 notify() {
   local title="$1" msg="$2"
@@ -140,18 +181,22 @@ while true; do
   ts_human=$(date '+%H:%M:%S')
   ts_iso=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
-  body_file=$(mktemp /tmp/ccp-bruce-watch.XXXX)
-  t0=$(date +%s%N)
+  body_file=$(mktemp "${TMPDIR:-/tmp}/ccp-bruce-watch.XXXXXX")
+  CURRENT_BODY_FILE="$body_file"
+  t0=$(now_ms)
   http_code=$(curl -sS -o "$body_file" -w "%{http_code}" \
     -m "$TIMEOUT" \
     -H "Authorization: Bearer $BRUCE_API_KEY" \
     "$URL" 2>/dev/null)
-  t1=$(date +%s%N)
+  t1=$(now_ms)
   [[ -z "$http_code" || ! "$http_code" =~ ^[0-9]{3}$ ]] && http_code="000"
-  latency_ms=$(( (t1 - t0) / 1000000 ))
-  health_raw=$(jq -r '.healthPercent // empty' "$body_file" 2>/dev/null)
-  stab_raw=$(jq -r '.serviceStabilityPercent // empty' "$body_file" 2>/dev/null)
+  endpoint_status_json=$((10#$http_code))
+  latency_ms=$(( t1 - t0 ))
+  (( latency_ms < 0 )) && latency_ms=0
+  health_raw=$(jq -r '.healthPercent | if type == "number" then . else empty end' "$body_file" 2>/dev/null)
+  stab_raw=$(jq -r '.serviceStabilityPercent | if type == "number" then . else empty end' "$body_file" 2>/dev/null)
   rm -f "$body_file"
+  CURRENT_BODY_FILE=""
 
   alert_suffix=""
 
@@ -254,12 +299,16 @@ while true; do
 
   jq -cn \
     --arg ts "$ts_iso" \
-    --argjson endpoint_status "$http_code" \
+    --argjson endpoint_status "$endpoint_status_json" \
     --argjson endpoint_latency_ms "$latency_ms" \
     --argjson health_percent "$health_arg" \
     --argjson service_stability_percent "$stab_arg" \
     '{ts:$ts, endpoint_status:$endpoint_status, endpoint_latency_ms:$endpoint_latency_ms, health_percent:$health_percent, service_stability_percent:$service_stability_percent}' \
     >> "$LOG_FILE"
+
+  if (( MAX_PROBES > 0 && N_PROBE >= MAX_PROBES )); then
+    break
+  fi
 
   sleep "$INTERVAL"
 done

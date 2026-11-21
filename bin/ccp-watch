@@ -35,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --vendor=*)
       VENDOR="${1#--vendor=}"
+      if [[ -z "$VENDOR" ]]; then
+        echo "ccp-watch: --vendor requires an argument (one of: $SUPPORTED_VENDORS)" >&2
+        exit 1
+      fi
       shift
       ;;
     --)
@@ -57,12 +61,15 @@ if [[ $# -eq 0 ]]; then
 fi
 TASK="$*"
 
-# Validate vendor against supported set
+# Validate vendor against exact whitelist (rejects regex metacharacters / newlines)
 if [[ -n "$VENDOR" ]]; then
-  if ! printf '%s\n' $SUPPORTED_VENDORS | grep -qx "$VENDOR"; then
-    echo "ccp-watch: unsupported vendor '$VENDOR' (supported: $SUPPORTED_VENDORS)" >&2
-    exit 1
-  fi
+  case "$VENDOR" in
+    deepseek|glm|mimo|mimo-payg) ;;
+    *)
+      echo "ccp-watch: unsupported vendor '$VENDOR' (supported: $SUPPORTED_VENDORS)" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 if [[ -z "${CMUX_WORKSPACE_ID:-}" ]]; then
@@ -86,11 +93,10 @@ if [[ -n "$VENDOR" ]]; then
 fi
 
 # Unique stream + stderr files per invocation
-TS="$(date +%s)"
-STREAM="/tmp/ccp-watch-$$-${TS}.ndjson"
-ERR="/tmp/ccp-watch-$$-${TS}.err"
-: > "$STREAM"
-: > "$ERR"
+WATCH_TMP="${CCP_WATCH_TMPDIR:-${TMPDIR:-/tmp}}"
+WATCH_TMP="${WATCH_TMP%/}"
+STREAM="$(umask 077 && mktemp "${WATCH_TMP}/ccp-watch-ndjson.XXXXXX")"
+ERR="$(umask 077 && mktemp "${WATCH_TMP}/ccp-watch-err.XXXXXX")"
 
 # ────────────────────────────────────────────────────────────────────────────
 # Side-pane registry: tracks LIVE ccp-watch surfaces so concurrent dispatches
@@ -99,8 +105,8 @@ ERR="/tmp/ccp-watch-$$-${TS}.err"
 # Lock uses atomic mkdir (portable, no flock dependency — macOS ships no flock).
 # Stale locks (older than LOCK_STALE_SEC) are force-taken to recover from crashes.
 # ────────────────────────────────────────────────────────────────────────────
-REGISTRY=/tmp/ccp-watch-active.surfaces
-LOCKDIR=/tmp/ccp-watch.lock.d
+REGISTRY="${WATCH_TMP}/ccp-watch-active.surfaces"
+LOCKDIR="${WATCH_TMP}/ccp-watch.lock.d"
 LOCK_TIMEOUT_SEC=10
 LOCK_STALE_SEC=60
 
@@ -131,7 +137,8 @@ release_lock() {
 }
 
 # Critical section: prune dead entries → pick split target → split → register
-acquire_lock || exit 5
+acquire_lock || { rm -f "$STREAM" "$ERR"; exit 5; }
+trap 'release_lock; rm -f "$STREAM" "$ERR"' EXIT
 
 LIVE=()
 if [[ -f "$REGISTRY" ]]; then
@@ -157,13 +164,14 @@ if (( ${#LIVE[@]} > 0 )); then
 fi
 
 if [[ -n "$TARGET" ]]; then
-  SPLIT_OUT="$(cmux new-split down --surface "$TARGET" --focus false 2>&1)"
+  SPLIT_OUT="$(cmux new-split down --surface "$TARGET" --focus false 2>&1 || true)"
 else
-  SPLIT_OUT="$(cmux new-split right --focus false 2>&1)"
+  SPLIT_OUT="$(cmux new-split right --focus false 2>&1 || true)"
 fi
 
 if [[ ! "$SPLIT_OUT" =~ surface:([0-9]+) ]]; then
   release_lock
+  rm -f "$STREAM" "$ERR"
   echo "ccp-watch: failed to split cmux pane: $SPLIT_OUT" >&2
   exit 4
 fi
@@ -174,7 +182,12 @@ echo "$SURFACE" >> "$REGISTRY"
 
 release_lock
 
+CLEANED=0
 cleanup() {
+  if (( CLEANED )); then
+    return 0
+  fi
+  CLEANED=1
   # EOF sentinel lets the renderer halt cleanly, breaking its tail|jq|while pipeline
   echo '{"type":"ccp_watch_eof"}' >> "$STREAM" 2>/dev/null || true
   # Give user a moment to see the result card; override with CCP_WATCH_DWELL=N
@@ -197,8 +210,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Tell the side pane to start tailing + rendering.
-SIDE_CMD="clear; printf '\\033[2m[ccp-watch] tailing %s\\033[0m\\n' '$STREAM'; tail -F '$STREAM' | '$RENDERER'"
+# Tell the side pane to start tailing + rendering (use %q quoting for path safety).
+printf -v stream_q '%q' "$STREAM"
+printf -v renderer_q '%q' "$RENDERER"
+SIDE_CMD="clear; printf '\\033[2m[ccp-watch] tailing %s\\033[0m\\n' ${stream_q}; tail -n +1 -F ${stream_q} | ${renderer_q}"
 cmux send --surface "$SURFACE" "$SIDE_CMD" >/dev/null
 cmux send-key --surface "$SURFACE" Enter >/dev/null
 
@@ -214,8 +229,9 @@ echo ""
 
 # Run claude / vendor. Critical bits:
 #   </dev/null         — prevents stdin block in non-TTY parents (subagent dispatch)
-#   2>"$ERR"           — keeps stream pure NDJSON; renderer's grep '^{' filter is a second line of defense
+#   2>"$ERR"           — keeps stream pure NDJSON; renderer's JSON parser is a second line of defense
 #   tee -a "$STREAM"   — fans NDJSON to side pane while we extract final text for main pane
+rc=0
 if [[ -n "$VENDOR" ]]; then
   # Vendor path: ccp-*-rescue is a zsh function — invoke via interactive zsh
   # so ~/.zshrc → plugin/sidecar.sh → function definition is loaded.
@@ -224,10 +240,11 @@ if [[ -n "$VENDOR" ]]; then
     </dev/null \
     2>"$ERR" \
     | tee -a "$STREAM" \
-    | jq -r --unbuffered '
-        select(.type == "result")
+    | jq -rR --unbuffered '
+        fromjson?
+        | select(type == "object" and .type == "result")
         | .result // ""
-      ' || true
+      ' || rc=$?
 else
   claude -p \
     --output-format stream-json \
@@ -237,10 +254,11 @@ else
     </dev/null \
     2>"$ERR" \
     | tee -a "$STREAM" \
-    | jq -r --unbuffered '
-        select(.type == "result")
+    | jq -rR --unbuffered '
+        fromjson?
+        | select(type == "object" and .type == "result")
         | .result // ""
-      ' || true
+      ' || rc=$?
 fi
 
 # Sanity check: stream must contain a system event or claude never started a turn
@@ -256,4 +274,5 @@ if ! grep -q '"type":"system"' "$STREAM"; then
 fi
 
 echo ""
-echo "▸ done"
+echo "▸ done (exit=$rc)"
+exit "$rc"

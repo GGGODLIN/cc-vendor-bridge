@@ -1,3 +1,14 @@
+_cc_flag_takes_value() {
+  case "${1:-}" in
+    -r|--resume|--model|--effort|--settings|--fallback-model|--output-format|--input-format|--permission-mode|--plugin-dir|--add-dir|--mcp-config|--max-turns|--session-id|--system-prompt|--append-system-prompt|--append-subagent-system-prompt|--disallowed-tools|--allowed-tools|--disallowedTools|--allowedTools|--agents|--json-schema|--tools|-n|--name|--agent|--debug-file|--max-budget-usd|--autocompact|--plugin-url|--permission-prompts|--environment|--betas|--file|--system-prompt-file|--append-system-prompt-file|--remote-control-session-name-prefix)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # 在子 shell 設 header，避免下一次啟動繼承本次的 fast 選擇。
 cc_fast_run() (
   local -a prefix=()
@@ -35,9 +46,11 @@ cc_fast_run() (
         ;;
     esac
   done
-  if [[ "${1:-}" == -* && "${1:-}" != -p && "${1:-}" != --print && ( "${2:-}" == -bot || "${2:-}" == --bot ) ]]; then
-    bot_selected=1
-    set -- "$1" "${@:3}"
+  if [[ "${1:-}" == -* && "${1:-}" != -- && "${1:-}" != -p && "${1:-}" != --print ]] && ! _cc_flag_takes_value "${1:-}"; then
+    if [[ "${2:-}" == -bot || "${2:-}" == --bot ]]; then
+      bot_selected=1
+      set -- "$1" "${@:3}"
+    fi
   fi
   if (( bot_selected )); then
     export PERSONAL_BOT_SESSION=1
