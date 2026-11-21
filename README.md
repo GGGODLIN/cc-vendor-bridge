@@ -75,7 +75,7 @@ Each function uses a subshell so env vars don't leak into your main shell. Your 
 
 ## 無審查入口
 
-`ccp-un` 的六槽固定使用 `group/un:high`。這個 Magpie 群組目前由 BazaarLink 的 3 顆無審查模型（`deepseek-v4.1-flash-1017-abliterated`、`glm-5.3-flash-abliterated`、`glm-5.3-abliterated`）搭配 Numes 的 2 顆免費無審查模型（`dealignai/glm-5.3-flash-uncensored-fp8`、`dealignai/deepseek-v4.1-flash-uncensored-fp8`）依序服務。配合池內 512K 模型上限，CC context 上限設 480000；output 32000。
+`ccp-un` 的六槽固定使用 `group/un:high`。這個 Magpie 群組目前由 BazaarLink 的 3 顆無審查模型（`deepseek-v4.1-flash-1017-abliterated`、`glm-5.3-flash-abliterated`、`glm-5.3-abliterated`）搭配 Numes 的 2 顆免費無審查模型（`dealignai/glm-5.3-flash-uncensored-fp8:free`、`dealignai/deepseek-v4.1-flash-uncensored-fp8:free`）依序服務。配合池內 512K 模型上限，CC context 上限設 480000；output 32000。
 
 部分上游無審查模型會在請求前注入身分提示，第三方推論商亦不保證零保留，所以不要拿它處理含秘密的 repo。
 
