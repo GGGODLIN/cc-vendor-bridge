@@ -158,8 +158,9 @@ def versions_error():
   try:
     values = {}
     for line in path.read_text().splitlines():
-      if line.startswith("GPT_") and "=" in line:
-        key, value = line.split("=", 1)
+      assignment = re.fullmatch(r"[ \t]*(?:export[ \t]+)?(GPT_[A-Z]+)=(.*)", line)
+      if assignment:
+        key, value = assignment.groups()
         values[key] = value
     required = ("GPT_ASTRA", "GPT_SOL", "GPT_TERRA", "GPT_LUNA")
     if not all(values.get(key) for key in required):

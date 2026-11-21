@@ -286,6 +286,15 @@ class ModelMapTest(unittest.TestCase):
     self.assertIn("不支援", result.stderr)
     self.assertNotIn("▶ 本次啟動", result.stdout)
 
+  def test_exported_model_version_assignments_are_accepted(self):
+    self.versions.write_text(
+      "export GPT_ASTRA=gpt-exp-astra\nexport GPT_SOL=gpt-exp-sol\n"
+      "  export GPT_TERRA=gpt-exp-terra\nGPT_LUNA=gpt-exp-luna\n"
+    )
+    result = self.run_cli("ccp-gpt")
+    self.assertEqual(result.returncode, 0, result.stderr)
+    self.assertIn("gpt-exp-astra", result.stdout)
+
 
 if __name__ == "__main__":
   unittest.main()
